@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TranscreveAí — Transcrição de Vídeos do YouTube</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #fee2e2;
+      border-top-color: #dc2626;
+      border-radius: 50%;
+      animation: girar 0.8s linear infinite;
+    }
+    @keyframes girar { to { transform: rotate(360deg); } }
+    #transcriptContent::-webkit-scrollbar { width: 6px; }
+    #transcriptContent::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 99px; }
+    #transcriptContent::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+  </style>
+</head>
+
+<body class="bg-slate-50 min-h-screen">
+
+  <!-- CABEÇALHO -->
+  <header class="bg-white border-b border-slate-200">
+    <div class="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <svg class="w-8 h-8 text-red-600 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2C0 8.1 0 12 0 12s0 3.9.5 5.8a3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1C24 15.9 24 12 24 12s0-3.9-.5-5.8zM9.5 15.6V8.4l6.3 3.6-6.3 3.6z"/>
+        </svg>
+        <div>
+          <h1 class="text-lg font-bold text-slate-900 leading-tight">TranscreveAí</h1>
+          <p class="text-xs text-slate-400">Transcrição de vídeos do YouTube com IA</p>
+        </div>
+      </div>
+      <!-- Indicador de status do servidor -->
+      <div id="statusServidor" class="flex items-center gap-1.5 text-xs text-slate-400">
+        <span class="w-2 h-2 rounded-full bg-slate-300" id="statusDot"></span>
+        <span id="statusTexto">Verificando servidor...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTEÚDO PRINCIPAL -->
+  <main class="max-w-2xl mx-auto px-6 py-10 space-y-5">
+
+    <!-- AVISO: servidor offline -->
+    <div id="avisoServidor" class="hidden bg-amber-50 border border-amber-200 rounded-2xl p-5">
+      <div class="flex items-start gap-3">
+        <svg class="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        </svg>
+        <div>
+          <p class="text-sm font-semibold text-amber-800">Servidor não encontrado</p>
+          <p class="text-sm text-amber-700 mt-1">
+            Abra o Terminal e execute: <code class="bg-amber-100 px-1.5 py-0.5 rounded font-mono">python3 server.py</code>
+            — depois recarregue esta página.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- CARD: Entrada do link -->
+    <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+      <h2 class="font-semibold text-slate-800 mb-1">Cole o link do vídeo abaixo</h2>
+      <p class="text-sm text-slate-400 mb-5">
+        Funciona com qualquer vídeo público do YouTube — mesmo sem legenda.
+      </p>
+
+      <input
+        id="urlInput"
+        type="text"
+        placeholder="https://www.youtube.com/watch?v=..."
+        class="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-800 placeholder-slate-300
+               focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent mb-3"
+      />
+
+      <div class="flex gap-3">
+        <select id="langSelect"
+          class="px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-700 bg-white
+                 focus:outline-none focus:ring-2 focus:ring-red-500">
+          <option value="pt">🇧🇷 Português</option>
+          <option value="en">🇺🇸 English</option>
+          <option value="es">🇪🇸 Español</option>
+          <option value="fr">🇫🇷 Français</option>
+          <option value="de">🇩🇪 Deutsch</option>
+          <option value="ja">🇯🇵 日本語</option>
+        </select>
+
+        <button onclick="transcrever()"
+          class="flex-1 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-semibold
+                 py-3 px-5 rounded-xl transition-colors duration-150 text-sm flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>
+          </svg>
+          Transcrever
+        </button>
+      </div>
+    </div>
+
+    <!-- CARD: Carregando -->
+    <div id="cardLoading" class="hidden bg-white rounded-2xl border border-slate-100 shadow-sm p-8">
+      <div class="flex flex-col items-center gap-4">
+        <div class="spinner"></div>
+        <div class="text-center">
+          <p id="msgLoading" class="text-sm text-slate-600 font-medium">Processando...</p>
+          <p class="text-xs text-slate-400 mt-1">Vídeos longos podem levar alguns minutos</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- CARD: Erro -->
+    <div id="cardErro" class="hidden bg-red-50 border border-red-200 rounded-2xl p-5">
+      <div class="flex items-start gap-3">
+        <svg class="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div>
+          <p class="text-sm font-semibold text-red-700">Não foi possível transcrever</p>
+          <p id="msgErro" class="text-sm text-red-600 mt-1"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- CARD: Resultado -->
+    <div id="cardResultado" class="hidden space-y-4">
+
+      <!-- Info do vídeo -->
+      <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex gap-4 items-start">
+        <img id="thumbnail" src="" alt="Capa do vídeo"
+          class="w-28 h-16 object-cover rounded-xl flex-shrink-0 bg-slate-100"/>
+        <div class="min-w-0">
+          <h3 id="tituloVideo" class="font-semibold text-slate-900 text-sm leading-snug line-clamp-2"></h3>
+          <p id="canalVideo" class="text-xs text-slate-400 mt-1"></p>
+          <span id="badgeInfo"
+            class="inline-block mt-2 text-xs bg-green-100 text-green-700 px-2.5 py-0.5 rounded-full font-medium">
+          </span>
+        </div>
+      </div>
+
+      <!-- Área de transcrição -->
+      <div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+
+        <!-- Barra de ações -->
+        <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-wrap gap-2">
+          <h3 class="font-semibold text-slate-800 text-sm">Transcrição</h3>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button id="btnTimestamps" onclick="alternarTimestamps()"
+              class="text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition-colors">
+              ⏱ Timestamps
+            </button>
+            <button onclick="copiarTranscricao(this)"
+              class="text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition-colors">
+              📋 Copiar tudo
+            </button>
+            <button onclick="baixarTranscricao()"
+              class="text-xs px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors">
+              ⬇ Baixar .txt
+            </button>
+          </div>
+        </div>
+
+        <!-- Texto da transcrição -->
+        <div id="transcriptContent"
+          class="p-5 max-h-[500px] overflow-y-auto text-sm text-slate-700 leading-relaxed space-y-0.5">
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // Se estiver rodando no computador local usa localhost, senão usa o endereço do servidor na nuvem
+    const SERVIDOR = window.location.hostname === 'localhost'
+      ? 'http://localhost:8080'
+      : window.location.origin;
+
+    let dadosTranscricao = [];
+    let exibirTimestamps = true;
+    let tituloAtual = '';
+
+    // ── Utilitários ──────────────────────────────────────────────────────────
+
+    function extrairVideoId(url) {
+      const regex = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([^&\n?#]{11})/;
+      const match = url.match(regex);
+      return match ? match[1] : null;
+    }
+
+    function formatarTempo(segundos) {
+      const m = Math.floor(segundos / 60).toString().padStart(2, '0');
+      const s = Math.floor(segundos % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    // ── Controles de interface ───────────────────────────────────────────────
+
+    function mostrarLoading(msg) {
+      document.getElementById('cardLoading').classList.remove('hidden');
+      document.getElementById('msgLoading').textContent = msg;
+      document.getElementById('cardErro').classList.add('hidden');
+      document.getElementById('cardResultado').classList.add('hidden');
+    }
+
+    function ocultarLoading() {
+      document.getElementById('cardLoading').classList.add('hidden');
+    }
+
+    function mostrarErro(msg) {
+      ocultarLoading();
+      document.getElementById('cardErro').classList.remove('hidden');
+      document.getElementById('msgErro').textContent = msg;
+    }
+
+    // ── Status do servidor ───────────────────────────────────────────────────
+
+    async function verificarServidor() {
+      const dot   = document.getElementById('statusDot');
+      const texto = document.getElementById('statusTexto');
+      const aviso = document.getElementById('avisoServidor');
+
+      try {
+        const res = await fetch(`${SERVIDOR}/api/status`, { signal: AbortSignal.timeout(3000) });
+        const dados = await res.json();
+
+        if (dados.online && dados.groq_configurado) {
+          dot.className   = 'w-2 h-2 rounded-full bg-green-500';
+          texto.textContent = 'Servidor conectado';
+          aviso.classList.add('hidden');
+        } else if (dados.online && !dados.groq_configurado) {
+          dot.className   = 'w-2 h-2 rounded-full bg-amber-400';
+          texto.textContent = 'Chave Groq não configurada';
+          aviso.classList.remove('hidden');
+          document.querySelector('#avisoServidor p:last-child').textContent =
+            'O servidor está rodando, mas falta configurar a chave da API Groq no arquivo server.py.';
+        }
+      } catch {
+        dot.className   = 'w-2 h-2 rounded-full bg-red-400';
+        texto.textContent = 'Servidor offline';
+        aviso.classList.remove('hidden');
+      }
+    }
+
+    // ── Busca info do vídeo (título e thumbnail) ─────────────────────────────
+
+    async function buscarInfoVideo(videoId) {
+      const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Vídeo não encontrado, privado ou inválido.');
+      return await res.json();
+    }
+
+    // ── Renderização da transcrição ──────────────────────────────────────────
+
+    function renderizarTranscricao() {
+      const container = document.getElementById('transcriptContent');
+      container.innerHTML = dadosTranscricao.map(linha => `
+        <div class="flex gap-3 py-1.5 px-2 rounded-lg hover:bg-slate-50 transition-colors">
+          ${exibirTimestamps
+            ? `<span class="text-red-500 font-mono text-xs mt-0.5 flex-shrink-0 w-10 select-none">${formatarTempo(linha.inicio)}</span>`
+            : ''}
+          <span class="text-slate-700">${linha.texto}</span>
+        </div>
+      `).join('');
+    }
+
+    // ── Ações dos botões ────────────────────────────────────────────────────
+
+    function alternarTimestamps() {
+      exibirTimestamps = !exibirTimestamps;
+      const btn = document.getElementById('btnTimestamps');
+      btn.classList.toggle('bg-red-50', exibirTimestamps);
+      btn.classList.toggle('border-red-300', exibirTimestamps);
+      btn.classList.toggle('text-red-600', exibirTimestamps);
+      renderizarTranscricao();
+    }
+
+    function copiarTranscricao(botao) {
+      const texto = dadosTranscricao.map(l =>
+        exibirTimestamps ? `[${formatarTempo(l.inicio)}] ${l.texto}` : l.texto
+      ).join('\n');
+      navigator.clipboard.writeText(texto).then(() => {
+        const original = botao.textContent;
+        botao.textContent = '✅ Copiado!';
+        setTimeout(() => botao.textContent = original, 2000);
+      });
+    }
+
+    function baixarTranscricao() {
+      const texto = dadosTranscricao.map(l => `[${formatarTempo(l.inicio)}] ${l.texto}`).join('\n');
+      const blob = new Blob([texto], { type: 'text/plain;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${tituloAtual.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'transcricao'}.txt`;
+      link.click();
+    }
+
+    // ── Função principal ─────────────────────────────────────────────────────
+
+    async function transcrever() {
+      const url    = document.getElementById('urlInput').value.trim();
+      const idioma = document.getElementById('langSelect').value;
+
+      if (!url) { mostrarErro('Cole um link do YouTube antes de continuar.'); return; }
+
+      const videoId = extrairVideoId(url);
+      if (!videoId) { mostrarErro('Link inválido. Use youtube.com/watch?v=... ou youtu.be/...'); return; }
+
+      mostrarLoading('Buscando informações do vídeo...');
+
+      try {
+        // PASSO 1: Título e thumbnail (YouTube oEmbed, sem autenticação)
+        const info = await buscarInfoVideo(videoId);
+        tituloAtual = info.title;
+        document.getElementById('tituloVideo').textContent = info.title;
+        document.getElementById('canalVideo').textContent  = info.author_name;
+        document.getElementById('thumbnail').src           = info.thumbnail_url;
+
+        // PASSO 2: Baixar áudio e transcrever via servidor local
+        mostrarLoading('Baixando áudio e transcrevendo com IA... (pode levar 1-2 min)');
+
+        const resposta = await fetch(`${SERVIDOR}/api/transcrever`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, idioma }),
+        });
+
+        const resultado = await resposta.json();
+
+        if (!resposta.ok || resultado.erro) {
+          throw new Error(resultado.erro || 'Erro desconhecido no servidor.');
+        }
+
+        dadosTranscricao = resultado.segmentos;
+
+        document.getElementById('badgeInfo').textContent =
+          `✅ ${resultado.total} segmentos transcritos · Groq Whisper`;
+
+        ocultarLoading();
+        renderizarTranscricao();
+        document.getElementById('cardResultado').classList.remove('hidden');
+
+      } catch (erro) {
+        mostrarErro(erro.message || 'Erro inesperado. Verifique se o servidor está rodando.');
+      }
+    }
+
+    // ── Inicialização ────────────────────────────────────────────────────────
+
+    document.addEventListener('DOMContentLoaded', () => {
+      verificarServidor();
+      document.getElementById('urlInput').addEventListener('keydown', e => {
+        if (e.key === 'Enter') transcrever();
+      });
+    });
+  </script>
+
+</body>
+</html>
