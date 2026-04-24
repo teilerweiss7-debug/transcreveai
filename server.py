@@ -81,11 +81,10 @@ def baixar_via_invidious(video_id, pasta):
 def baixar_via_ytdlp(url, pasta, caminho_cookies=None):
     """Baixa áudio via yt-dlp (fallback caso Invidious falhe)."""
     opcoes = {
-        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'format': 'bestaudio/best',
         'outtmpl': os.path.join(pasta, 'audio.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
-        'extractor_args': {'youtube': {'player_client': ['ios', 'web_creator']}},
     }
     if caminho_cookies:
         opcoes['cookiefile'] = caminho_cookies
