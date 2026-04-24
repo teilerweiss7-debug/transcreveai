@@ -1,38 +1,107 @@
 """
 TranscreveAí — Servidor Backend
 Recebe um link do YouTube, baixa o áudio e transcreve usando Groq Whisper (gratuito).
-
-Como configurar:
-  1. Acesse https://console.groq.com e crie uma conta gratuita
-  2. Gere uma API Key
-  3. Cole a chave na linha abaixo (substitua o texto entre aspas)
-  4. Rode: python3 server.py
 """
 
 import os
+import re
 import glob
+import shutil
 import tempfile
+import requests
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from groq import Groq
 import yt_dlp
 
 app = Flask(__name__)
-CORS(app)  # Permite que o index.html se comunique com este servidor
+CORS(app)
 
-# ─── COLOQUE SUA CHAVE GROQ AQUI ─────────────────────────────────────────────
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
-# ─────────────────────────────────────────────────────────────────────────────
+
+# Instâncias públicas do Invidious — intermediários que baixam o áudio do YouTube
+INVIDIOUS_INSTANCES = [
+    'https://invidious.io',
+    'https://inv.nadeko.net',
+    'https://invidious.privacyredirect.com',
+    'https://yt.cdaut.de',
+    'https://invidious.nerdvpn.de',
+]
 
 
-# ─── ROTA PRINCIPAL: serve o dashboard HTML ──────────────────────────────────
+def extrair_video_id(url):
+    match = re.search(r'(?:v=|youtu\.be/|embed/)([a-zA-Z0-9_-]{11})', url)
+    return match.group(1) if match else None
+
+
+def baixar_via_invidious(video_id, pasta):
+    """Baixa áudio via Invidious — evita o bloqueio de bot do YouTube."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    for instancia in INVIDIOUS_INSTANCES:
+        try:
+            r = requests.get(
+                f'{instancia}/api/v1/videos/{video_id}',
+                timeout=15,
+                headers=headers,
+            )
+            if r.status_code != 200:
+                continue
+
+            dados = r.json()
+            audios = [
+                f for f in dados.get('adaptiveFormats', [])
+                if 'audio' in f.get('type', '')
+            ]
+            if not audios:
+                continue
+
+            melhor = sorted(audios, key=lambda x: x.get('bitrate', 0), reverse=True)[0]
+            url_audio = melhor.get('url', '')
+            if not url_audio:
+                continue
+
+            ext = '.webm' if 'webm' in melhor.get('type', '') else '.m4a'
+            destino = os.path.join(pasta, f'audio{ext}')
+
+            with requests.get(url_audio, stream=True, timeout=120, headers=headers) as dl:
+                dl.raise_for_status()
+                with open(destino, 'wb') as f:
+                    shutil.copyfileobj(dl.raw, f)
+
+            return destino
+
+        except Exception:
+            continue
+
+    return None
+
+
+def baixar_via_ytdlp(url, pasta, caminho_cookies=None):
+    """Baixa áudio via yt-dlp (fallback caso Invidious falhe)."""
+    opcoes = {
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'outtmpl': os.path.join(pasta, 'audio.%(ext)s'),
+        'quiet': True,
+        'no_warnings': True,
+        'extractor_args': {'youtube': {'player_client': ['ios', 'web_creator']}},
+    }
+    if caminho_cookies:
+        opcoes['cookiefile'] = caminho_cookies
+
+    with yt_dlp.YoutubeDL(opcoes) as ydl:
+        ydl.download([url])
+
+    arquivos = glob.glob(os.path.join(pasta, 'audio.*'))
+    return arquivos[0] if arquivos else None
+
+
 @app.route('/')
 def index():
     return send_from_directory('.', 'index.html')
 
 
-# ─── ROTA DE STATUS ──────────────────────────────────────────────────────────
-# O dashboard usa essa rota para verificar se o servidor está ligado
 @app.route('/api/status', methods=['GET'])
 def status():
     return jsonify({
@@ -41,7 +110,6 @@ def status():
     })
 
 
-# ─── ROTA PRINCIPAL: TRANSCRIÇÃO ─────────────────────────────────────────────
 @app.route('/api/transcrever', methods=['POST'])
 def transcrever():
     dados = request.get_json()
@@ -52,58 +120,48 @@ def transcrever():
         return jsonify({'erro': 'Nenhum link foi enviado.'}), 400
 
     if not GROQ_API_KEY:
-        return jsonify({
-            'erro': 'Chave da API Groq não configurada. '
-                    'Abra o arquivo server.py e cole sua chave na variável GROQ_API_KEY.'
-        }), 500
+        return jsonify({'erro': 'Chave da API Groq não configurada.'}), 500
 
     try:
-        # Pasta temporária — tudo é apagado automaticamente ao terminar
         with tempfile.TemporaryDirectory() as pasta_temp:
+            arquivo_audio = None
 
-            # PASSO 1: Baixar o áudio do YouTube
-            opcoes = {
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
-                'outtmpl': os.path.join(pasta_temp, 'audio.%(ext)s'),
-                'quiet': True,
-                'no_warnings': True,
-                'extractor_args': {'youtube': {'player_client': ['ios', 'web_creator']}},
-            }
+            # PASSO 1a: Tenta baixar via Invidious (sem bloqueio de bot)
+            video_id = extrair_video_id(url)
+            if video_id:
+                arquivo_audio = baixar_via_invidious(video_id, pasta_temp)
 
-            # Procura cookies em dois lugares e copia para pasta temporária
-            # (yt-dlp precisa de um arquivo gravável)
-            CAMINHO_SECRET_FILE = '/etc/secrets/youtube_cookies.txt'
-            arquivo_cookies = None
+            # PASSO 1b: Fallback — yt-dlp com cookies
+            if not arquivo_audio:
+                CAMINHO_SECRET = '/etc/secrets/youtube_cookies.txt'
+                cookies_conteudo = ''
+                temp_cookies = None
 
-            cookies_conteudo = ''
-            if os.path.exists(CAMINHO_SECRET_FILE):
-                with open(CAMINHO_SECRET_FILE, 'r') as f:
-                    cookies_conteudo = f.read()
-            else:
-                cookies_conteudo = os.environ.get('YOUTUBE_COOKIES', '')
+                if os.path.exists(CAMINHO_SECRET):
+                    with open(CAMINHO_SECRET, 'r') as f:
+                        cookies_conteudo = f.read()
+                else:
+                    cookies_conteudo = os.environ.get('YOUTUBE_COOKIES', '')
 
-            if cookies_conteudo:
-                import tempfile as tf
-                arquivo_cookies = tf.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                arquivo_cookies.write(cookies_conteudo)
-                arquivo_cookies.close()
-                opcoes['cookiefile'] = arquivo_cookies.name
+                if cookies_conteudo:
+                    tc = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+                    tc.write(cookies_conteudo)
+                    tc.close()
+                    temp_cookies = tc.name
 
-            with yt_dlp.YoutubeDL(opcoes) as ydl:
-                ydl.download([url])
+                try:
+                    arquivo_audio = baixar_via_ytdlp(url, pasta_temp, temp_cookies)
+                finally:
+                    if temp_cookies:
+                        os.unlink(temp_cookies)
 
-            if arquivo_cookies:
-                os.unlink(arquivo_cookies.name)
+            if not arquivo_audio:
+                return jsonify({
+                    'erro': 'Não foi possível baixar o áudio. O vídeo pode ser privado ou bloqueado.'
+                }), 500
 
-            # Encontra o arquivo de áudio baixado
-            arquivos = glob.glob(os.path.join(pasta_temp, 'audio.*'))
-            if not arquivos:
-                return jsonify({'erro': 'Não foi possível baixar o áudio. O vídeo pode ser privado ou bloqueado.'}), 500
-
-            arquivo_audio = arquivos[0]
-            extensao = os.path.splitext(arquivo_audio)[1]  # ex: .m4a, .webm
-
-            # PASSO 2: Enviar o áudio para a Groq Whisper transcrever
+            # PASSO 2: Transcrever com Groq Whisper
+            extensao = os.path.splitext(arquivo_audio)[1]
             cliente = Groq(api_key=GROQ_API_KEY)
 
             with open(arquivo_audio, 'rb') as f:
@@ -115,8 +173,6 @@ def transcrever():
                     timestamp_granularities=['segment'],
                 )
 
-            # PASSO 3: Formatar os segmentos para o frontend
-            # A Groq pode retornar um objeto ou um dicionário — tratamos os dois casos
             def pegar(obj, chave, padrao=None):
                 if isinstance(obj, dict):
                     return obj.get(chave, padrao)
@@ -147,12 +203,11 @@ def transcrever():
         return jsonify({'erro': str(e)}), 500
 
 
-# ─── INICIALIZAÇÃO ────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     print('')
     print('  TranscreveAí — Servidor rodando!')
-    print('  Acesse o dashboard: abra o arquivo index.html no navegador')
-    print('  Para parar: pressione Ctrl+C')
+    print('  Acesse: http://localhost:8080')
+    print('  Para parar: Ctrl+C')
     print('')
     porta = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=porta)
