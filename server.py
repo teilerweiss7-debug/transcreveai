@@ -7,13 +7,12 @@ import re
 import glob
 import shutil
 import tempfile
-import html as html_module
-import xml.etree.ElementTree as ET
 import requests
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from groq import Groq
 import yt_dlp
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
 app = Flask(__name__)
 CORS(app)
@@ -26,56 +25,64 @@ def extrair_video_id(url):
     return match.group(1) if match else None
 
 
-# ── MÉTODO 1: Legendas do YouTube (rápido, sem IA) ───────────────────────────
+# ── MÉTODO 1: Legendas do YouTube via youtube-transcript-api ─────────────────
 
-def obter_legendas_xml(video_id, idioma):
-    """Busca legendas via timedtext API. Retorna XML ou None."""
-    base = 'https://video.google.com/timedtext'
-    headers = {'User-Agent': 'Mozilla/5.0'}
-
+def obter_legendas(video_id, idioma):
+    """Busca legendas usando youtube-transcript-api. Retorna lista de segmentos ou None."""
     try:
-        r = requests.get(f'{base}?type=list&v={video_id}', timeout=10, headers=headers)
-        if '<track' not in r.text:
-            return None
-    except Exception:
-        return None
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
 
-    for lang in [idioma, 'pt', 'en']:
-        for kind in ['', 'asr']:
+        # Ordem de preferência de idiomas
+        for lang in [idioma, 'pt', 'pt-BR', 'en']:
             try:
-                params = {'v': video_id, 'lang': lang}
-                if kind:
-                    params['kind'] = kind
-                r = requests.get(base, params=params, timeout=10, headers=headers)
-                if r.status_code == 200 and '<text' in r.text:
-                    return r.text
+                t = transcript_list.find_transcript([lang])
+                dados = t.fetch()
+                return _parsear_transcript(dados)
             except Exception:
                 continue
+
+        # Nenhum idioma preferido encontrado — pega qualquer disponível
+        for t in transcript_list:
+            try:
+                dados = t.fetch()
+                resultado = _parsear_transcript(dados)
+                if resultado:
+                    return resultado
+            except Exception:
+                continue
+
+    except (TranscriptsDisabled, NoTranscriptFound):
+        pass
+    except Exception:
+        pass
+
     return None
 
 
-def parsear_legendas(xml_texto):
-    """Converte XML de legendas em lista de segmentos."""
-    try:
-        root = ET.fromstring(xml_texto)
-        segmentos = []
-        for el in root.findall('text'):
-            inicio = round(float(el.get('start', 0)), 1)
-            texto = html_module.unescape((el.text or '').replace('\n', ' ')).strip()
-            if texto:
-                segmentos.append({'inicio': inicio, 'texto': texto})
-        return segmentos if segmentos else None
-    except Exception:
-        return None
+def _parsear_transcript(dados):
+    """Converte o resultado do youtube-transcript-api em lista de segmentos."""
+    segmentos = []
+    for s in dados:
+        # Compatível com dicionário (versões antigas) e objeto (versões novas)
+        if isinstance(s, dict):
+            texto = s.get('text', '')
+            inicio = s.get('start', 0)
+        else:
+            texto = getattr(s, 'text', '')
+            inicio = getattr(s, 'start', 0)
+
+        texto = texto.replace('\n', ' ').strip()
+        if texto:
+            segmentos.append({'inicio': round(float(inicio), 1), 'texto': texto})
+
+    return segmentos if segmentos else None
 
 
 # ── MÉTODO 2: Download de áudio via cobalt.tools + Groq ──────────────────────
 
 def baixar_via_cobalt(url, pasta):
     """Baixa áudio via cobalt.tools."""
-    formatos = ['mp3', 'opus', 'best']
-
-    for fmt in formatos:
+    for fmt in ['mp3', 'opus', 'best']:
         try:
             r = requests.post(
                 'https://api.cobalt.tools/',
@@ -124,13 +131,16 @@ def baixar_via_ytdlp(url, pasta):
     }
 
     cookies_path = '/etc/secrets/youtube_cookies.txt'
+    temp_cookies = None
+
     if os.path.exists(cookies_path):
         opcoes['cookiefile'] = cookies_path
     elif os.environ.get('YOUTUBE_COOKIES'):
         tc = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
         tc.write(os.environ['YOUTUBE_COOKIES'])
         tc.close()
-        opcoes['cookiefile'] = tc.name
+        temp_cookies = tc.name
+        opcoes['cookiefile'] = temp_cookies
 
     try:
         with yt_dlp.YoutubeDL(opcoes) as ydl:
@@ -140,9 +150,8 @@ def baixar_via_ytdlp(url, pasta):
     except Exception:
         return None
     finally:
-        tmp = opcoes.get('cookiefile')
-        if tmp and tmp != cookies_path and os.path.exists(tmp):
-            os.unlink(tmp)
+        if temp_cookies and os.path.exists(temp_cookies):
+            os.unlink(temp_cookies)
 
 
 def transcrever_audio_groq(arquivo_audio, idioma):
@@ -160,9 +169,7 @@ def transcrever_audio_groq(arquivo_audio, idioma):
         )
 
     def pegar(obj, chave, padrao=None):
-        if isinstance(obj, dict):
-            return obj.get(chave, padrao)
-        return getattr(obj, chave, padrao)
+        return obj.get(chave, padrao) if isinstance(obj, dict) else getattr(obj, chave, padrao)
 
     segments_raw   = pegar(resposta, 'segments') or []
     texto_completo = pegar(resposta, 'text') or ''
@@ -208,21 +215,19 @@ def transcrever():
 
     try:
         # TENTATIVA 1: Legendas do YouTube (instantâneo, sem IA)
-        xml_legendas = obter_legendas_xml(video_id, idioma)
-        if xml_legendas:
-            segmentos = parsear_legendas(xml_legendas)
-            if segmentos:
-                return jsonify({
-                    'sucesso': True,
-                    'segmentos': segmentos,
-                    'total': len(segmentos),
-                    'fonte': 'legendas',
-                })
+        segmentos = obter_legendas(video_id, idioma)
+        if segmentos:
+            return jsonify({
+                'sucesso': True,
+                'segmentos': segmentos,
+                'total': len(segmentos),
+                'fonte': 'legendas',
+            })
 
         # Para a rota de áudio, precisa da chave Groq
         if not GROQ_API_KEY:
             return jsonify({
-                'erro': 'Este vídeo não tem legendas disponíveis e a chave Groq não está configurada para usar a IA.'
+                'erro': 'Este vídeo não tem legendas disponíveis e a chave Groq não está configurada.'
             }), 500
 
         # TENTATIVA 2: cobalt.tools + Groq Whisper
@@ -235,7 +240,7 @@ def transcrever():
 
             if not arquivo_audio:
                 return jsonify({
-                    'erro': 'Este vídeo não tem legendas e não foi possível baixar o áudio. Tente um vídeo público diferente.'
+                    'erro': 'Este vídeo não tem legendas disponíveis. Tente um vídeo público diferente.'
                 }), 500
 
             segmentos = transcrever_audio_groq(arquivo_audio, idioma)

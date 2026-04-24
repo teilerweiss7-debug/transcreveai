@@ -4,3 +4,4 @@ yt-dlp
 groq
 requests
 gunicorn
+youtube-transcript-api
