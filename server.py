@@ -27,16 +27,20 @@ def extrair_video_id(url):
 
 
 def _cookies_path():
-    path = '/etc/secrets/youtube_cookies.txt'
-    if os.path.exists(path):
-        return path
-    env_cookies = os.environ.get('YOUTUBE_COOKIES', '')
-    if env_cookies:
-        tc = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-        tc.write(env_cookies)
-        tc.close()
-        return tc.name
-    return None
+    """Copia cookies para arquivo temporário gravável (yt-dlp tenta escrever de volta nos cookies)."""
+    conteudo = ''
+    secret = '/etc/secrets/youtube_cookies.txt'
+    if os.path.exists(secret):
+        with open(secret, 'r', encoding='utf-8') as f:
+            conteudo = f.read()
+    if not conteudo:
+        conteudo = os.environ.get('YOUTUBE_COOKIES', '')
+    if not conteudo:
+        return None
+    tc = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+    tc.write(conteudo)
+    tc.close()
+    return tc.name
 
 
 class _YDLLogger:
@@ -104,27 +108,32 @@ def obter_legendas_ytdlp(video_id, idioma):
     url = f'https://www.youtube.com/watch?v={video_id}'
     cookies = _cookies_path()
 
-    with tempfile.TemporaryDirectory() as pasta:
-        opcoes = {
-            'skip_download': True,
-            'writeautomaticsub': True,
-            'writesubtitles': True,
-            'subtitleslangs': [idioma, 'pt', 'en', 'pt-BR'],
-            'subtitlesformat': 'json3',
-            'outtmpl': os.path.join(pasta, 'sub'),
-            'logger': _YDLLogger('ytdlp-sub'),
-            'quiet': False,
-            'no_warnings': False,
-        }
-        if cookies:
-            opcoes['cookiefile'] = cookies
-            print(f'[legendas-ytdlp] usando cookies: {cookies}')
-        else:
-            print('[legendas-ytdlp] sem cookies')
+    try:
+        with tempfile.TemporaryDirectory() as pasta:
+            opcoes = {
+                'skip_download': True,
+                'writeautomaticsub': True,
+                'writesubtitles': True,
+                'subtitleslangs': [idioma, 'pt', 'en', 'pt-BR'],
+                'subtitlesformat': 'json3',
+                'outtmpl': os.path.join(pasta, 'sub'),
+                'logger': _YDLLogger('ytdlp-sub'),
+                'quiet': False,
+                'no_warnings': False,
+            }
+            if cookies:
+                opcoes['cookiefile'] = cookies
+                print(f'[legendas-ytdlp] usando cookies: {cookies}')
+            else:
+                print('[legendas-ytdlp] sem cookies')
 
-        try:
-            with yt_dlp.YoutubeDL(opcoes) as ydl:
-                ydl.download([url])
+            try:
+                with yt_dlp.YoutubeDL(opcoes) as ydl:
+                    ydl.download([url])
+            except Exception as e:
+                print(f'[legendas-ytdlp] exceção no download: {e}')
+
+            # Tenta ler os arquivos mesmo se houve exceção no cleanup do yt-dlp
             arquivos = glob.glob(os.path.join(pasta, '*.json3'))
             print(f'[legendas-ytdlp] arquivos encontrados: {arquivos}')
             if arquivos:
@@ -136,8 +145,9 @@ def obter_legendas_ytdlp(video_id, idioma):
                     print('[legendas-ytdlp] arquivo json3 vazio ou inválido')
             else:
                 print('[legendas-ytdlp] nenhum arquivo json3 gerado')
-        except Exception as e:
-            print(f'[legendas-ytdlp] exceção: {e}')
+    finally:
+        if cookies and os.path.exists(cookies):
+            os.unlink(cookies)
 
     return None
 
