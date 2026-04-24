@@ -171,10 +171,17 @@ def _parsear_json3(caminho):
 # ── MÉTODO 3: Piped API + Groq (proxy intermediário, IP diferente do Render) ──
 
 PIPED_INSTANCIAS = [
+    'https://piapi.adminforge.de',
+    'https://pipedapi.privacydev.net',
+    'https://pipedapi.tokhmi.xyz',
     'https://pipedapi.kavin.rocks',
-    'https://piped-api.garudalinux.org',
-    'https://api.piped.projectsegfau.lt',
-    'https://api.piped.yt',
+]
+
+INVIDIOUS_INSTANCIAS = [
+    'https://invidious.io',
+    'https://yewtu.be',
+    'https://inv.vern.cc',
+    'https://invidious.privacyredirect.com',
 ]
 
 def baixar_via_piped(video_id, pasta):
@@ -221,7 +228,53 @@ def baixar_via_piped(video_id, pasta):
     return None
 
 
-# ── MÉTODO 4: yt-dlp áudio + Groq ────────────────────────────────────────────
+# ── MÉTODO 4: Invidious API + Groq ───────────────────────────────────────────
+
+def baixar_via_invidious(video_id, pasta):
+    print(f'[invidious] iniciando para {video_id}')
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    for instancia in INVIDIOUS_INSTANCIAS:
+        try:
+            r = requests.get(f'{instancia}/api/v1/videos/{video_id}', timeout=15, headers=headers)
+            print(f'[invidious] {instancia}: HTTP {r.status_code}')
+            if r.status_code != 200:
+                continue
+
+            dados = r.json()
+            audios = [f for f in dados.get('adaptiveFormats', []) if 'audio' in f.get('type', '')]
+            if not audios:
+                print(f'[invidious] {instancia}: sem formatos de áudio')
+                continue
+
+            melhor = sorted(audios, key=lambda x: x.get('bitrate', 0), reverse=True)[0]
+            audio_url = melhor.get('url', '')
+            tipo = melhor.get('type', '')
+            print(f'[invidious] URL obtida tipo={tipo}, baixando...')
+
+            if not audio_url:
+                continue
+
+            ext = '.webm' if 'webm' in tipo else '.m4a'
+            destino = os.path.join(pasta, f'audio{ext}')
+
+            with requests.get(audio_url, stream=True, timeout=300, headers=headers) as dl:
+                dl.raise_for_status()
+                with open(destino, 'wb') as f:
+                    shutil.copyfileobj(dl.raw, f)
+
+            tamanho = os.path.getsize(destino) if os.path.exists(destino) else 0
+            print(f'[invidious] tamanho={tamanho} bytes')
+            if tamanho > 1000:
+                return destino
+
+        except Exception as e:
+            print(f'[invidious] {instancia} falhou: {e}')
+
+    return None
+
+
+# ── MÉTODO 5: yt-dlp áudio + Groq ────────────────────────────────────────────
 
 def baixar_via_ytdlp(url, pasta):
     print('[ytdlp-audio] iniciando download')
@@ -329,14 +382,11 @@ def transcrever():
 
         # MÉTODOS 3, 4 e 5: áudio + Groq
         with tempfile.TemporaryDirectory() as pasta_temp:
-            # Piped: proxy intermediário com IP diferente do Render
             arquivo_audio = baixar_via_piped(video_id, pasta_temp)
 
-            # pytubefix: API Android como fallback
             if not arquivo_audio:
-                arquivo_audio = baixar_via_pytubefix(url, pasta_temp)
+                arquivo_audio = baixar_via_invidious(video_id, pasta_temp)
 
-            # yt-dlp com cookies como último recurso
             if not arquivo_audio:
                 arquivo_audio = baixar_via_ytdlp(url, pasta_temp)
 
