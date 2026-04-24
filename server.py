@@ -188,9 +188,12 @@ def baixar_via_ytdlp(url, pasta):
 
 
 def transcrever_audio_groq(arquivo_audio, idioma):
-    print(f'[groq] transcrevendo {arquivo_audio}')
-    cliente = Groq(api_key=GROQ_API_KEY)
+    tamanho = os.path.getsize(arquivo_audio)
     extensao = os.path.splitext(arquivo_audio)[1]
+    print(f'[groq] iniciando: arquivo={arquivo_audio} ext={extensao} tamanho={tamanho} bytes idioma={idioma}')
+
+    cliente = Groq(api_key=GROQ_API_KEY)
+
     with open(arquivo_audio, 'rb') as f:
         resposta = cliente.audio.transcriptions.create(
             file=(f'audio{extensao}', f),
@@ -200,11 +203,15 @@ def transcrever_audio_groq(arquivo_audio, idioma):
             timestamp_granularities=['segment'],
         )
 
+    print(f'[groq] resposta recebida, tipo={type(resposta).__name__}')
+
     def pegar(obj, chave, padrao=None):
         return obj.get(chave, padrao) if isinstance(obj, dict) else getattr(obj, chave, padrao)
 
     segments_raw   = pegar(resposta, 'segments') or []
     texto_completo = pegar(resposta, 'text') or ''
+
+    print(f'[groq] segments={len(segments_raw)} texto_len={len(texto_completo)}')
 
     if segments_raw:
         return [
