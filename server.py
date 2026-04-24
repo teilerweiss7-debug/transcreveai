@@ -168,25 +168,56 @@ def _parsear_json3(caminho):
         return None
 
 
-# ── MÉTODO 3: pytubefix áudio + Groq (usa API Android, bypassa bot detection) ─
+# ── MÉTODO 3: Piped API + Groq (proxy intermediário, IP diferente do Render) ──
 
-def baixar_via_pytubefix(url, pasta):
-    from pytubefix import YouTube
-    for client in ['IOS', 'WEB_EMBEDDED_PLAYER', 'ANDROID_EMBEDDED_PLAYER', 'TV_EMBED']:
-        print(f'[pytubefix] tentando cliente {client}')
+PIPED_INSTANCIAS = [
+    'https://pipedapi.kavin.rocks',
+    'https://piped-api.garudalinux.org',
+    'https://api.piped.projectsegfau.lt',
+    'https://api.piped.yt',
+]
+
+def baixar_via_piped(video_id, pasta):
+    print(f'[piped] iniciando para {video_id}')
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    for instancia in PIPED_INSTANCIAS:
         try:
-            yt = YouTube(url, client=client)
-            audio = yt.streams.filter(only_audio=True).order_by('bitrate').last()
-            if not audio:
-                print(f'[pytubefix] {client}: sem stream de áudio')
+            r = requests.get(f'{instancia}/streams/{video_id}', timeout=15, headers=headers)
+            print(f'[piped] {instancia}: HTTP {r.status_code}')
+            if r.status_code != 200:
                 continue
-            nome = f'audio_{client.lower()}'
-            destino = audio.download(output_path=pasta, filename=nome)
-            if os.path.exists(destino) and os.path.getsize(destino) > 1000:
-                print(f'[pytubefix] OK com {client}: {os.path.getsize(destino)} bytes')
+
+            dados = r.json()
+            streams = dados.get('audioStreams', [])
+            if not streams:
+                print(f'[piped] {instancia}: sem audioStreams')
+                continue
+
+            melhor = sorted(streams, key=lambda x: x.get('bitrate', 0), reverse=True)[0]
+            audio_url = melhor.get('url', '')
+            mime = melhor.get('mimeType', '')
+            print(f'[piped] URL obtida mime={mime}, baixando...')
+
+            if not audio_url:
+                continue
+
+            ext = '.webm' if 'webm' in mime else '.m4a'
+            destino = os.path.join(pasta, f'audio{ext}')
+
+            with requests.get(audio_url, stream=True, timeout=300, headers=headers) as dl:
+                dl.raise_for_status()
+                with open(destino, 'wb') as f:
+                    shutil.copyfileobj(dl.raw, f)
+
+            tamanho = os.path.getsize(destino) if os.path.exists(destino) else 0
+            print(f'[piped] tamanho={tamanho} bytes')
+            if tamanho > 1000:
                 return destino
+
         except Exception as e:
-            print(f'[pytubefix] {client} falhou: {e}')
+            print(f'[piped] {instancia} falhou: {e}')
+
     return None
 
 
@@ -296,12 +327,16 @@ def transcrever():
         if not GROQ_API_KEY:
             return jsonify({'erro': 'Vídeo sem legendas e chave Groq não configurada.'}), 500
 
-        # MÉTODOS 3 e 4: áudio + Groq
+        # MÉTODOS 3, 4 e 5: áudio + Groq
         with tempfile.TemporaryDirectory() as pasta_temp:
-            # Tenta pytubefix primeiro (API Android, menos bloqueada)
-            arquivo_audio = baixar_via_pytubefix(url, pasta_temp)
+            # Piped: proxy intermediário com IP diferente do Render
+            arquivo_audio = baixar_via_piped(video_id, pasta_temp)
 
-            # Fallback: yt-dlp com cookies
+            # pytubefix: API Android como fallback
+            if not arquivo_audio:
+                arquivo_audio = baixar_via_pytubefix(url, pasta_temp)
+
+            # yt-dlp com cookies como último recurso
             if not arquivo_audio:
                 arquivo_audio = baixar_via_ytdlp(url, pasta_temp)
 
