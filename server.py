@@ -363,61 +363,54 @@ def transcrever_arquivo():
             os.unlink(tmp.name)
 
 
-# ── PLAUD WEBHOOK (automático) ────────────────────────────────────────────────
+# ── PLAUD WEBHOOK (automático via Zapier) ────────────────────────────────────
 
 @app.route('/api/plaud/webhook/<token>', methods=['POST'])
 def plaud_webhook(token):
-    """Recebe gravação do Plaud automaticamente via webhook."""
+    """Recebe gravação do Plaud via Zapier (JSON com texto transcrito)."""
     with get_db() as db:
         user = db.execute('SELECT * FROM usuarios WHERE plaud_token = ?', (token,)).fetchone()
     if not user:
         return jsonify({'erro': 'Token inválido.'}), 401
 
-    arq      = request.files.get('audio') or request.files.get('file')
-    plaud_id = request.form.get('recording_id', '')
-    titulo   = request.form.get('title', 'Gravação Plaud')
-    idioma   = request.form.get('language', 'pt')
-
-    if not arq:
-        # Tenta JSON com URL de áudio
+    # Aceita JSON (Zapier) ou form-data
+    if request.is_json:
         dados = request.get_json(silent=True) or {}
-        audio_url = dados.get('audio_url', '')
-        if audio_url:
-            try:
-                r = requests.get(audio_url, timeout=120)
-                r.raise_for_status()
-                tmp = tempfile.NamedTemporaryFile(suffix='.m4a', delete=False)
-                tmp.write(r.content)
-                tmp.close()
-                segmentos = transcrever_audio_groq(tmp.name, idioma)
-                os.unlink(tmp.name)
-                titulo = dados.get('title', titulo)
-                plaud_id = dados.get('recording_id', plaud_id)
-            except Exception as e:
-                return jsonify({'erro': f'Erro ao baixar áudio: {e}'}), 500
-        else:
-            return jsonify({'erro': 'Nenhum arquivo de áudio recebido.'}), 400
     else:
-        nome = arq.filename or 'plaud.m4a'
-        ext  = os.path.splitext(nome)[1].lower() or '.m4a'
-        tmp  = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
-        arq.save(tmp.name)
-        tmp.close()
-        try:
-            segmentos = transcrever_audio_groq(tmp.name, idioma)
-        finally:
-            if os.path.exists(tmp.name):
-                os.unlink(tmp.name)
+        dados = request.form.to_dict()
 
-    if not segmentos:
-        return jsonify({'erro': 'Falha na transcrição.'}), 500
+    print(f'[plaud-webhook] payload recebido: {list(dados.keys())}')
+
+    # Campos que o Plaud pode enviar via Zapier
+    titulo = (dados.get('title') or dados.get('name') or
+              dados.get('recording_title') or dados.get('Note Title') or
+              'Gravação Plaud')
+
+    # Texto da transcrição — tenta vários nomes de campo possíveis
+    texto = (dados.get('transcription') or dados.get('transcript') or
+             dados.get('content') or dados.get('text') or
+             dados.get('Transcription') or dados.get('Content') or
+             dados.get('note_content') or '')
+
+    # Se não tiver texto, tenta juntar todos os campos de texto
+    if not texto:
+        partes = [str(v) for v in dados.values() if isinstance(v, str) and len(v) > 50]
+        texto = '\n\n'.join(partes)
+
+    if not texto:
+        print(f'[plaud-webhook] payload sem texto: {dados}')
+        return jsonify({'erro': 'Nenhum texto recebido. Campos disponíveis: ' + str(list(dados.keys()))}), 400
+
+    # Converte texto em segmentos (sem timestamps, vindo do Plaud)
+    paragrafos = [p.strip() for p in texto.split('\n') if p.strip()]
+    segmentos  = [{'inicio': 0, 'texto': p} for p in paragrafos] if paragrafos else [{'inicio': 0, 'texto': texto.strip()}]
 
     with get_db() as db:
         db.execute(
-            'INSERT INTO transcricoes (user_id, titulo, fonte, segmentos, plaud_id) VALUES (?, ?, ?, ?, ?)',
-            (user['id'], titulo, 'plaud', json.dumps(segmentos), plaud_id)
+            'INSERT INTO transcricoes (user_id, titulo, fonte, segmentos) VALUES (?, ?, ?, ?)',
+            (user['id'], titulo, 'plaud', json.dumps(segmentos))
         )
-    print(f'[plaud-webhook] nova gravação para user {user["id"]}: {titulo}')
+    print(f'[plaud-webhook] nova nota para user {user["id"]}: {titulo}')
     return jsonify({'sucesso': True})
 
 
