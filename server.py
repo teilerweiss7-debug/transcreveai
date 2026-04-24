@@ -70,22 +70,24 @@ def transcrever():
                 'extractor_args': {'youtube': {'player_client': ['ios', 'web_creator']}},
             }
 
-            # Procura arquivo de cookies em dois lugares:
-            # 1. Secret File do Render (/etc/secrets/youtube_cookies.txt)
-            # 2. Variável de ambiente YOUTUBE_COOKIES (fallback)
+            # Procura cookies em dois lugares e copia para pasta temporária
+            # (yt-dlp precisa de um arquivo gravável)
             CAMINHO_SECRET_FILE = '/etc/secrets/youtube_cookies.txt'
             arquivo_cookies = None
 
+            cookies_conteudo = ''
             if os.path.exists(CAMINHO_SECRET_FILE):
-                opcoes['cookiefile'] = CAMINHO_SECRET_FILE
+                with open(CAMINHO_SECRET_FILE, 'r') as f:
+                    cookies_conteudo = f.read()
             else:
                 cookies_conteudo = os.environ.get('YOUTUBE_COOKIES', '')
-                if cookies_conteudo:
-                    import tempfile as tf
-                    arquivo_cookies = tf.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                    arquivo_cookies.write(cookies_conteudo)
-                    arquivo_cookies.close()
-                    opcoes['cookiefile'] = arquivo_cookies.name
+
+            if cookies_conteudo:
+                import tempfile as tf
+                arquivo_cookies = tf.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+                arquivo_cookies.write(cookies_conteudo)
+                arquivo_cookies.close()
+                opcoes['cookiefile'] = arquivo_cookies.name
 
             with yt_dlp.YoutubeDL(opcoes) as ydl:
                 ydl.download([url])
