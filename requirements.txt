@@ -6,3 +6,4 @@ requests
 gunicorn
 youtube-transcript-api
 pytubefix
+psycopg2-binary

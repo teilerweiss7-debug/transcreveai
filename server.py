@@ -2,7 +2,7 @@
 Transcreve IA — Plataforma de Aprendizado
 """
 
-import os, re, glob, json, shutil, tempfile, sqlite3, secrets, subprocess
+import os, re, glob, json, shutil, tempfile, secrets, subprocess
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
@@ -15,52 +15,117 @@ import requests
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # aceita até 500 MB
 CORS(app, supports_credentials=True)
-app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-fixo-local')
 
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
-DB_PATH = os.environ.get('DB_PATH', '/tmp/transcrevai.db')
+GROQ_API_KEY  = os.environ.get('GROQ_API_KEY', '')
+DATABASE_URL  = os.environ.get('DATABASE_URL', '')  # PostgreSQL no Render
+_USE_PG       = bool(DATABASE_URL)
+
+if _USE_PG:
+    import psycopg2
+    import psycopg2.extras
+else:
+    import sqlite3
+    _DB_PATH = os.environ.get('DB_PATH', '/tmp/transcrevai.db')
 
 
-# ── DATABASE ──────────────────────────────────────────────────────────────────
+# ── DATABASE — wrapper compatível SQLite / PostgreSQL ─────────────────────────
+
+class _Cur:
+    """Cursor unificado para capturar lastrowid em ambos os bancos."""
+    def __init__(self, cursor, pg=False):
+        self._c = cursor
+        self._pg = pg
+
+    @property
+    def lastrowid(self):
+        if self._pg:
+            row = self._c.fetchone()
+            return row['id'] if row else None
+        return self._c.lastrowid
+
+    def fetchone(self):  return self._c.fetchone()
+    def fetchall(self):  return self._c.fetchall()
+
+
+class _DB:
+    def __init__(self):
+        if _USE_PG:
+            self._conn = psycopg2.connect(DATABASE_URL,
+                                          cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            self._conn = sqlite3.connect(_DB_PATH)
+            self._conn.row_factory = sqlite3.Row
+
+    def execute(self, sql, params=()):
+        if _USE_PG:
+            sql = sql.replace('?', '%s')
+            if sql.strip().upper().startswith('INSERT'):
+                sql = sql.rstrip().rstrip(';') + ' RETURNING id'
+        cur = self._conn.cursor()
+        cur.execute(sql, params)
+        return _Cur(cur, pg=_USE_PG)
+
+    def executescript(self, sql):
+        if _USE_PG:
+            sql = (sql
+                   .replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY')
+                   .replace("datetime('now')", 'NOW()')
+                   .replace('TEXT DEFAULT (NOW())', "TEXT DEFAULT NOW()"))
+            cur = self._conn.cursor()
+            for stmt in [s.strip() for s in sql.split(';') if s.strip()]:
+                cur.execute(stmt)
+        else:
+            self._conn.executescript(sql)
+
+    def __enter__(self): return self
+    def __exit__(self, exc, *_):
+        if exc is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        self._conn.close()
+
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return _DB()
+
+
+_SCHEMA = '''
+    CREATE TABLE IF NOT EXISTS usuarios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        nome TEXT NOT NULL,
+        senha_hash TEXT NOT NULL,
+        plaud_token TEXT UNIQUE,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS transcricoes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        titulo TEXT NOT NULL,
+        fonte TEXT NOT NULL,
+        segmentos TEXT NOT NULL,
+        video_url TEXT,
+        filename TEXT,
+        plaud_id TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY(user_id) REFERENCES usuarios(id)
+    );
+    CREATE TABLE IF NOT EXISTS chat (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transcricao_id INTEGER NOT NULL,
+        papel TEXT NOT NULL,
+        conteudo TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY(transcricao_id) REFERENCES transcricoes(id)
+    );
+'''
 
 
 def init_db():
     with get_db() as db:
-        db.executescript('''
-            CREATE TABLE IF NOT EXISTS usuarios (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                nome TEXT NOT NULL,
-                senha_hash TEXT NOT NULL,
-                plaud_token TEXT UNIQUE,
-                created_at TEXT DEFAULT (datetime('now'))
-            );
-            CREATE TABLE IF NOT EXISTS transcricoes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                titulo TEXT NOT NULL,
-                fonte TEXT NOT NULL,
-                segmentos TEXT NOT NULL,
-                video_url TEXT,
-                filename TEXT,
-                plaud_id TEXT,
-                created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY(user_id) REFERENCES usuarios(id)
-            );
-            CREATE TABLE IF NOT EXISTS chat (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                transcricao_id INTEGER NOT NULL,
-                papel TEXT NOT NULL,
-                conteudo TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY(transcricao_id) REFERENCES transcricoes(id)
-            );
-        ''')
+        db.executescript(_SCHEMA)
 
 
 init_db()
