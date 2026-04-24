@@ -171,20 +171,22 @@ def _parsear_json3(caminho):
 # ── MÉTODO 3: pytubefix áudio + Groq (usa API Android, bypassa bot detection) ─
 
 def baixar_via_pytubefix(url, pasta):
-    print('[pytubefix] tentando download de áudio')
-    try:
-        from pytubefix import YouTube
-        yt = YouTube(url, client='ANDROID')
-        audio = yt.streams.filter(only_audio=True).order_by('bitrate').last()
-        if not audio:
-            print('[pytubefix] nenhum stream de áudio encontrado')
-            return None
-        destino = audio.download(output_path=pasta, filename='audio_pyt')
-        if os.path.exists(destino) and os.path.getsize(destino) > 1000:
-            print(f'[pytubefix] OK: {destino} ({os.path.getsize(destino)} bytes)')
-            return destino
-    except Exception as e:
-        print(f'[pytubefix] erro: {e}')
+    from pytubefix import YouTube
+    for client in ['IOS', 'WEB_EMBEDDED_PLAYER', 'ANDROID_EMBEDDED_PLAYER', 'TV_EMBED']:
+        print(f'[pytubefix] tentando cliente {client}')
+        try:
+            yt = YouTube(url, client=client)
+            audio = yt.streams.filter(only_audio=True).order_by('bitrate').last()
+            if not audio:
+                print(f'[pytubefix] {client}: sem stream de áudio')
+                continue
+            nome = f'audio_{client.lower()}'
+            destino = audio.download(output_path=pasta, filename=nome)
+            if os.path.exists(destino) and os.path.getsize(destino) > 1000:
+                print(f'[pytubefix] OK com {client}: {os.path.getsize(destino)} bytes')
+                return destino
+        except Exception as e:
+            print(f'[pytubefix] {client} falhou: {e}')
     return None
 
 
