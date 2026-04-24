@@ -77,7 +77,41 @@ def parsear_legendas(xml_texto):
         return None
 
 
-# ── MÉTODO 2: Download de áudio via Invidious + Groq ─────────────────────────
+# ── MÉTODO 2: Download de áudio via cobalt.tools + Groq ──────────────────────
+
+def baixar_via_cobalt(url, pasta):
+    """Baixa áudio via cobalt.tools — serviço gratuito que bypassa bloqueios."""
+    try:
+        r = requests.post(
+            'https://api.cobalt.tools/',
+            json={'url': url, 'downloadMode': 'audio', 'audioFormat': 'opus'},
+            headers={
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0',
+            },
+            timeout=30,
+        )
+        if r.status_code != 200:
+            return None
+        dados = r.json()
+        status = dados.get('status')
+        download_url = dados.get('url')
+        if status not in ('stream', 'redirect', 'tunnel') or not download_url:
+            return None
+        destino = os.path.join(pasta, 'audio.opus')
+        with requests.get(download_url, stream=True, timeout=120) as dl:
+            dl.raise_for_status()
+            with open(destino, 'wb') as f:
+                shutil.copyfileobj(dl.raw, f)
+        if os.path.getsize(destino) > 1000:
+            return destino
+    except Exception:
+        pass
+    return None
+
+
+# ── MÉTODO 3: Download de áudio via Invidious + Groq ─────────────────────────
 
 def baixar_via_invidious(video_id, pasta):
     """Baixa áudio via Invidious API."""
@@ -202,12 +236,16 @@ def transcrever():
                     'total': len(segmentos),
                 })
 
-        # TENTATIVA 2 e 3: Download de áudio + Groq Whisper
+        # TENTATIVA 2, 3 e 4: Download de áudio + Groq Whisper
         with tempfile.TemporaryDirectory() as pasta_temp:
             arquivo_audio = None
 
-            # Tenta Invidious primeiro
-            arquivo_audio = baixar_via_invidious(video_id, pasta_temp)
+            # Tenta cobalt.tools primeiro (mais confiável)
+            arquivo_audio = baixar_via_cobalt(url, pasta_temp)
+
+            # Tenta Invidious se cobalt falhar
+            if not arquivo_audio:
+                arquivo_audio = baixar_via_invidious(video_id, pasta_temp)
 
             # Fallback: yt-dlp com cookies
             if not arquivo_audio:
