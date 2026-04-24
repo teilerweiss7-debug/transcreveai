@@ -27,7 +27,6 @@ def extrair_video_id(url):
 
 
 def _cookies_path():
-    """Retorna o caminho do arquivo de cookies, ou None se não existir."""
     path = '/etc/secrets/youtube_cookies.txt'
     if os.path.exists(path):
         return path
@@ -40,10 +39,26 @@ def _cookies_path():
     return None
 
 
-# ── MÉTODO 1: youtube-transcript-api ────────────────────────────────────────
+class _YDLLogger:
+    """Captura logs do yt-dlp e imprime com prefixo."""
+    def __init__(self, prefix):
+        self.prefix = prefix
+    def debug(self, msg):
+        if msg.startswith('[debug]'):
+            return
+        print(f'[{self.prefix}] {msg}')
+    def info(self, msg):
+        print(f'[{self.prefix}] {msg}')
+    def warning(self, msg):
+        print(f'[{self.prefix}] AVISO: {msg}')
+    def error(self, msg):
+        print(f'[{self.prefix}] ERRO: {msg}')
+
+
+# ── MÉTODO 1: youtube-transcript-api ─────────────────────────────────────────
 
 def obter_legendas_api(video_id, idioma):
-    print(f'[legendas-api] tentando video_id={video_id} idioma={idioma}')
+    print(f'[legendas-api] iniciando para {video_id}')
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         for lang in [idioma, 'pt', 'pt-BR', 'en']:
@@ -52,24 +67,21 @@ def obter_legendas_api(video_id, idioma):
                 dados = t.fetch()
                 resultado = _parsear_transcript(dados)
                 if resultado:
-                    print(f'[legendas-api] sucesso com idioma={lang}, {len(resultado)} segmentos')
+                    print(f'[legendas-api] OK: {len(resultado)} segmentos (lang={lang})')
                     return resultado
             except Exception as e:
-                print(f'[legendas-api] falhou lang={lang}: {e}')
-                continue
-        # Pega qualquer idioma disponível
+                print(f'[legendas-api] lang={lang} falhou: {e}')
         for t in transcript_list:
             try:
                 dados = t.fetch()
                 resultado = _parsear_transcript(dados)
                 if resultado:
-                    print(f'[legendas-api] sucesso com qualquer idioma, {len(resultado)} segmentos')
+                    print(f'[legendas-api] OK: {len(resultado)} segmentos (qualquer idioma)')
                     return resultado
             except Exception as e:
-                print(f'[legendas-api] falhou idioma genérico: {e}')
-                continue
+                print(f'[legendas-api] idioma genérico falhou: {e}')
     except (TranscriptsDisabled, NoTranscriptFound) as e:
-        print(f'[legendas-api] legendas desativadas ou não encontradas: {e}')
+        print(f'[legendas-api] legendas desativadas/não encontradas: {e}')
     except Exception as e:
         print(f'[legendas-api] erro geral: {e}')
     return None
@@ -85,10 +97,10 @@ def _parsear_transcript(dados):
     return segmentos if segmentos else None
 
 
-# ── MÉTODO 2: yt-dlp só para legendas (usa cookies) ─────────────────────────
+# ── MÉTODO 2: yt-dlp só legendas (usa cookies) ───────────────────────────────
 
 def obter_legendas_ytdlp(video_id, idioma):
-    print(f'[legendas-ytdlp] tentando video_id={video_id}')
+    print(f'[legendas-ytdlp] iniciando para {video_id}')
     url = f'https://www.youtube.com/watch?v={video_id}'
     cookies = _cookies_path()
 
@@ -100,25 +112,32 @@ def obter_legendas_ytdlp(video_id, idioma):
             'subtitleslangs': [idioma, 'pt', 'en', 'pt-BR'],
             'subtitlesformat': 'json3',
             'outtmpl': os.path.join(pasta, 'sub'),
-            'quiet': True,
-            'no_warnings': True,
+            'logger': _YDLLogger('ytdlp-sub'),
+            'quiet': False,
+            'no_warnings': False,
         }
         if cookies:
             opcoes['cookiefile'] = cookies
+            print(f'[legendas-ytdlp] usando cookies: {cookies}')
+        else:
+            print('[legendas-ytdlp] sem cookies')
 
         try:
             with yt_dlp.YoutubeDL(opcoes) as ydl:
                 ydl.download([url])
-
             arquivos = glob.glob(os.path.join(pasta, '*.json3'))
             print(f'[legendas-ytdlp] arquivos encontrados: {arquivos}')
             if arquivos:
                 resultado = _parsear_json3(arquivos[0])
                 if resultado:
-                    print(f'[legendas-ytdlp] sucesso, {len(resultado)} segmentos')
+                    print(f'[legendas-ytdlp] OK: {len(resultado)} segmentos')
                     return resultado
+                else:
+                    print('[legendas-ytdlp] arquivo json3 vazio ou inválido')
+            else:
+                print('[legendas-ytdlp] nenhum arquivo json3 gerado')
         except Exception as e:
-            print(f'[legendas-ytdlp] erro: {e}')
+            print(f'[legendas-ytdlp] exceção: {e}')
 
     return None
 
@@ -135,61 +154,21 @@ def _parsear_json3(caminho):
                 segmentos.append({'inicio': round(float(inicio), 1), 'texto': texto})
         return segmentos if segmentos else None
     except Exception as e:
-        print(f'[json3] erro ao parsear: {e}')
+        print(f'[json3] erro: {e}')
         return None
 
 
-# ── MÉTODO 3: cobalt.tools + Groq ────────────────────────────────────────────
-
-def baixar_via_cobalt(url, pasta):
-    print('[cobalt] tentando download de áudio')
-    for fmt in ['mp3', 'opus', 'best']:
-        try:
-            r = requests.post(
-                'https://api.cobalt.tools/',
-                json={'url': url, 'downloadMode': 'audio', 'audioFormat': fmt},
-                headers={
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'Mozilla/5.0',
-                },
-                timeout=30,
-            )
-            print(f'[cobalt] status HTTP={r.status_code} formato={fmt} resposta={r.text[:200]}')
-            if r.status_code != 200:
-                continue
-            dados = r.json()
-            status = dados.get('status')
-            download_url = dados.get('url')
-            if status not in ('stream', 'redirect') or not download_url:
-                print(f'[cobalt] status inválido: {status}')
-                continue
-            ext = '.mp3' if fmt == 'mp3' else '.opus'
-            destino = os.path.join(pasta, f'audio{ext}')
-            with requests.get(download_url, stream=True, timeout=180) as dl:
-                dl.raise_for_status()
-                with open(destino, 'wb') as f:
-                    shutil.copyfileobj(dl.raw, f)
-            tamanho = os.path.getsize(destino)
-            print(f'[cobalt] arquivo baixado: {tamanho} bytes')
-            if tamanho > 1000:
-                return destino
-        except Exception as e:
-            print(f'[cobalt] erro formato={fmt}: {e}')
-            continue
-    return None
-
-
-# ── MÉTODO 4: yt-dlp áudio + Groq ────────────────────────────────────────────
+# ── MÉTODO 3: yt-dlp áudio + Groq ────────────────────────────────────────────
 
 def baixar_via_ytdlp(url, pasta):
-    print('[ytdlp-audio] tentando download de áudio')
+    print('[ytdlp-audio] iniciando download')
     cookies = _cookies_path()
     opcoes = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(pasta, 'audio.%(ext)s'),
-        'quiet': True,
-        'no_warnings': True,
+        'logger': _YDLLogger('ytdlp-audio'),
+        'quiet': False,
+        'no_warnings': False,
     }
     if cookies:
         opcoes['cookiefile'] = cookies
@@ -204,7 +183,7 @@ def baixar_via_ytdlp(url, pasta):
         print(f'[ytdlp-audio] arquivos: {arquivos}')
         return arquivos[0] if arquivos else None
     except Exception as e:
-        print(f'[ytdlp-audio] erro: {e}')
+        print(f'[ytdlp-audio] exceção: {e}')
         return None
 
 
@@ -262,7 +241,7 @@ def transcrever():
     if not video_id:
         return jsonify({'erro': 'Link do YouTube inválido.'}), 400
 
-    print(f'\n=== Nova transcrição: {video_id} idioma={idioma} ===')
+    print(f'\n=== Transcrição: {video_id} idioma={idioma} ===')
 
     try:
         # MÉTODO 1: youtube-transcript-api
@@ -278,17 +257,13 @@ def transcrever():
         if not GROQ_API_KEY:
             return jsonify({'erro': 'Vídeo sem legendas e chave Groq não configurada.'}), 500
 
-        # MÉTODO 3: cobalt.tools + Groq
+        # MÉTODO 3: yt-dlp áudio + Groq
         with tempfile.TemporaryDirectory() as pasta_temp:
-            arquivo_audio = baixar_via_cobalt(url, pasta_temp)
-
-            # MÉTODO 4: yt-dlp áudio + Groq
-            if not arquivo_audio:
-                arquivo_audio = baixar_via_ytdlp(url, pasta_temp)
+            arquivo_audio = baixar_via_ytdlp(url, pasta_temp)
 
             if not arquivo_audio:
-                print('[transcrever] todos os métodos falharam')
-                return jsonify({'erro': 'Não foi possível obter a transcrição deste vídeo. Tente outro vídeo público.'}), 500
+                print('=== Todos os métodos falharam ===')
+                return jsonify({'erro': 'Não foi possível obter a transcrição. Tente um vídeo público diferente.'}), 500
 
             segmentos = transcrever_audio_groq(arquivo_audio, idioma)
             if not segmentos:
@@ -297,7 +272,7 @@ def transcrever():
             return jsonify({'sucesso': True, 'segmentos': segmentos, 'total': len(segmentos), 'fonte': 'audio_ia'})
 
     except Exception as e:
-        print(f'[transcrever] exceção: {e}')
+        print(f'[transcrever] exceção não tratada: {e}')
         return jsonify({'erro': str(e)}), 500
 
 
