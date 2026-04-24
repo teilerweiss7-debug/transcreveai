@@ -2,7 +2,7 @@
 Transcreve IA — Plataforma de Aprendizado
 """
 
-import os, re, glob, json, shutil, tempfile, sqlite3, secrets
+import os, re, glob, json, shutil, tempfile, sqlite3, secrets, subprocess
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
@@ -13,6 +13,7 @@ from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, No
 import requests
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # aceita até 500 MB
 CORS(app, supports_credentials=True)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
@@ -310,8 +311,67 @@ def _titulo_youtube(video_id):
 
 # ── TRANSCREVER ARQUIVO ───────────────────────────────────────────────────────
 
-EXTS_OK = {'.mp3', '.mp4', '.m4a', '.wav', '.ogg', '.webm', '.mov', '.mkv', '.flac', '.aac', '.opus'}
-MAX_BYTES = 25 * 1024 * 1024
+EXTS_OK  = {'.mp3', '.mp4', '.m4a', '.wav', '.ogg', '.webm', '.mov', '.mkv', '.flac', '.aac', '.opus'}
+MAX_GROQ = 24 * 1024 * 1024  # 24 MB — margem abaixo do limite de 25 MB do Groq
+
+
+def _tem_ffmpeg():
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
+        return True
+    except Exception:
+        return False
+
+
+def _preparar_chunks(arquivo, pasta):
+    """Converte para MP3 mono 16kHz 32kbps e divide em partes se necessário.
+    Retorna lista de (caminho_do_chunk, offset_em_segundos)."""
+
+    audio_path = os.path.join(pasta, 'audio.mp3')
+
+    # Converte/extrai áudio: mono, 16 kHz, 32 kbps — ideal para fala, tamanho mínimo
+    cmd = ['ffmpeg', '-i', arquivo, '-vn', '-ar', '16000', '-ac', '1',
+           '-b:a', '32k', audio_path, '-y']
+    res = subprocess.run(cmd, capture_output=True, timeout=600)
+    if res.returncode != 0 or not os.path.exists(audio_path):
+        print(f'[ffmpeg] erro na conversão: {res.stderr.decode()[:300]}')
+        return None
+
+    tamanho = os.path.getsize(audio_path)
+    print(f'[ffmpeg] áudio convertido: {tamanho} bytes')
+
+    if tamanho <= MAX_GROQ:
+        return [(audio_path, 0.0)]
+
+    # Descobre duração total para calcular número de chunks
+    probe = subprocess.run(
+        ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', audio_path],
+        capture_output=True, text=True, timeout=30
+    )
+    try:
+        duracao_total = float(json.loads(probe.stdout)['format']['duration'])
+    except Exception:
+        duracao_total = 7200.0  # assume 2h se não conseguir detectar
+
+    # Cada chunk de 20 minutos — a 32kbps mono, ~15 MB por chunk
+    duracao_chunk = 1200
+    chunks = []
+    offset = 0.0
+    i = 0
+    while offset < duracao_total:
+        chunk_path = os.path.join(pasta, f'chunk_{i:03d}.mp3')
+        subprocess.run(
+            ['ffmpeg', '-i', audio_path, '-ss', str(offset), '-t', str(duracao_chunk),
+             '-c', 'copy', chunk_path, '-y'],
+            capture_output=True, timeout=120
+        )
+        if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 1000:
+            chunks.append((chunk_path, offset))
+            print(f'[ffmpeg] chunk {i}: offset={offset}s tamanho={os.path.getsize(chunk_path)} bytes')
+        offset += duracao_chunk
+        i += 1
+
+    return chunks if chunks else None
 
 
 @app.route('/api/transcrever/arquivo', methods=['POST'])
@@ -322,7 +382,7 @@ def transcrever_arquivo():
 
     arq    = request.files.get('arquivo')
     idioma = request.form.get('idioma', 'pt')
-    fonte  = request.form.get('fonte', 'arquivo')  # 'arquivo' ou 'plaud'
+    fonte  = request.form.get('fonte', 'arquivo')
 
     if not arq:
         return jsonify({'erro': 'Nenhum arquivo enviado.'}), 400
@@ -331,24 +391,42 @@ def transcrever_arquivo():
     ext  = os.path.splitext(nome)[1].lower()
 
     if ext not in EXTS_OK:
-        return jsonify({'erro': f'Formato não suportado. Use: MP3, MP4, M4A, WAV, OGG, WEBM, AAC...'}), 400
+        return jsonify({'erro': 'Formato não suportado. Use: MP3, MP4, M4A, WAV, OGG, MOV, MKV, WEBM, AAC...'}), 400
 
-    tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
-    arq.save(tmp.name)
-    tmp.close()
+    pasta_temp = tempfile.mkdtemp()
+    original   = os.path.join(pasta_temp, f'original{ext}')
+    arq.save(original)
+    tamanho = os.path.getsize(original)
+    print(f'[arquivo] {nome} fonte={fonte} tamanho={tamanho} bytes')
 
     try:
-        if os.path.getsize(tmp.name) > MAX_BYTES:
-            return jsonify({'erro': 'Arquivo muito grande. Limite: 25 MB.'}), 400
+        EXTS_AUDIO_DIRETO = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac', '.opus'}
 
-        print(f'[arquivo] {nome} fonte={fonte}')
-        segmentos = transcrever_audio_groq(tmp.name, idioma)
+        if tamanho <= MAX_GROQ and ext in EXTS_AUDIO_DIRETO:
+            # Pequeno e já é áudio — transcreve direto sem ffmpeg
+            segmentos = transcrever_audio_groq(original, idioma)
+        else:
+            # Grande ou é vídeo — precisa do ffmpeg para comprimir/dividir
+            if not _tem_ffmpeg():
+                return jsonify({'erro': 'Arquivo muito grande e o servidor não tem ffmpeg instalado. Contate o suporte.'}), 500
+
+            chunks = _preparar_chunks(original, pasta_temp)
+            if not chunks:
+                return jsonify({'erro': 'Erro ao processar o arquivo. Verifique se ele não está corrompido.'}), 500
+
+            segmentos = []
+            for chunk_path, offset in chunks:
+                print(f'[arquivo] transcrevendo chunk offset={offset}s')
+                segs = transcrever_audio_groq(chunk_path, idioma)
+                if segs:
+                    for s in segs:
+                        s['inicio'] = round(s['inicio'] + offset, 1)
+                    segmentos.extend(segs)
 
         if not segmentos:
             return jsonify({'erro': 'Não foi possível transcrever o arquivo.'}), 500
 
         titulo = os.path.splitext(nome)[0]
-
         with get_db() as db:
             cur = db.execute(
                 'INSERT INTO transcricoes (user_id, titulo, fonte, segmentos, filename) VALUES (?, ?, ?, ?, ?)',
@@ -359,8 +437,7 @@ def transcrever_arquivo():
         return jsonify({'sucesso': True, 'id': tid, 'titulo': titulo, 'segmentos': segmentos, 'total': len(segmentos)})
 
     finally:
-        if os.path.exists(tmp.name):
-            os.unlink(tmp.name)
+        shutil.rmtree(pasta_temp, ignore_errors=True)
 
 
 # ── PLAUD WEBHOOK (automático via Zapier) ────────────────────────────────────
