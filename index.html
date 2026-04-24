@@ -1,371 +1,771 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TranscreveAí — Transcrição de Vídeos do YouTube</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .spinner {
-      width: 36px; height: 36px;
-      border: 3px solid #fee2e2;
-      border-top-color: #dc2626;
-      border-radius: 50%;
-      animation: girar 0.8s linear infinite;
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>TranscreveAí</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        brand: { DEFAULT: '#6C63FF', dark: '#5A52D5', light: '#EEF0FF' }
+      }
     }
-    @keyframes girar { to { transform: rotate(360deg); } }
-    #transcriptContent::-webkit-scrollbar { width: 6px; }
-    #transcriptContent::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 99px; }
-    #transcriptContent::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
-  </style>
+  }
+}
+</script>
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; background: #F8F9FC; }
+  .sidebar { min-width: 240px; max-width: 240px; }
+  .scroll-thin::-webkit-scrollbar { width: 4px; }
+  .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+  .chat-bubble-user { background: #6C63FF; color: white; border-radius: 18px 18px 4px 18px; }
+  .chat-bubble-ai   { background: white; color: #1f2937; border-radius: 18px 18px 18px 4px; border: 1px solid #e5e7eb; }
+  .fade-in { animation: fadeIn .25s ease; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+  .fonte-badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 600; letter-spacing: .3px; }
+  .fonte-youtube  { background: #FEE2E2; color: #DC2626; }
+  .fonte-arquivo  { background: #DBEAFE; color: #2563EB; }
+  .fonte-plaud    { background: #D1FAE5; color: #059669; }
+</style>
 </head>
+<body class="h-screen overflow-hidden">
 
-<body class="bg-slate-50 min-h-screen">
-
-  <!-- CABEÇALHO -->
-  <header class="bg-white border-b border-slate-200">
-    <div class="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <svg class="w-8 h-8 text-red-600 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2C0 8.1 0 12 0 12s0 3.9.5 5.8a3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1C24 15.9 24 12 24 12s0-3.9-.5-5.8zM9.5 15.6V8.4l6.3 3.6-6.3 3.6z"/>
-        </svg>
-        <div>
-          <h1 class="text-lg font-bold text-slate-900 leading-tight">TranscreveAí</h1>
-          <p class="text-xs text-slate-400">Transcrição de vídeos do YouTube com IA</p>
-        </div>
+<!-- ══════════ AUTH ══════════ -->
+<div id="tela-auth" class="hidden min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-indigo-50 to-white">
+  <div class="w-full max-w-md">
+    <div class="text-center mb-8">
+      <div class="w-14 h-14 bg-brand rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg">
+        <svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
       </div>
-      <!-- Indicador de status do servidor -->
-      <div id="statusServidor" class="flex items-center gap-1.5 text-xs text-slate-400">
-        <span class="w-2 h-2 rounded-full bg-slate-300" id="statusDot"></span>
-        <span id="statusTexto">Verificando servidor...</span>
-      </div>
+      <h1 class="text-2xl font-bold text-gray-900">TranscreveAí</h1>
+      <p class="text-gray-500 text-sm mt-1">Sua plataforma de aprendizado</p>
     </div>
-  </header>
 
-  <!-- CONTEÚDO PRINCIPAL -->
-  <main class="max-w-2xl mx-auto px-6 py-10 space-y-5">
+    <div class="flex bg-gray-100 rounded-xl p-1 mb-6">
+      <button onclick="mostrarAba('entrar')" id="aba-entrar" class="flex-1 py-2 rounded-lg text-sm font-medium transition-all bg-white shadow text-gray-900">Entrar</button>
+      <button onclick="mostrarAba('cadastrar')" id="aba-cadastrar" class="flex-1 py-2 rounded-lg text-sm font-medium transition-all text-gray-500">Criar conta</button>
+    </div>
 
-    <!-- AVISO: servidor offline -->
-    <div id="avisoServidor" class="hidden bg-amber-50 border border-amber-200 rounded-2xl p-5">
-      <div class="flex items-start gap-3">
-        <svg class="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-        </svg>
+    <div id="form-entrar" class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <div class="space-y-4">
         <div>
-          <p class="text-sm font-semibold text-amber-800">Servidor não encontrado</p>
-          <p class="text-sm text-amber-700 mt-1">
-            Abra o Terminal e execute: <code class="bg-amber-100 px-1.5 py-0.5 rounded font-mono">python3 server.py</code>
-            — depois recarregue esta página.
-          </p>
+          <label class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+          <input id="login-email" type="email" placeholder="seu@email.com"
+            class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent"/>
         </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Senha</label>
+          <input id="login-senha" type="password" placeholder="••••••••"
+            onkeydown="if(event.key==='Enter')fazerLogin()"
+            class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent"/>
+        </div>
+        <div id="login-erro" class="text-red-500 text-sm hidden"></div>
+        <button onclick="fazerLogin()" class="w-full bg-brand hover:bg-brand-dark text-white py-2.5 rounded-xl font-medium transition-colors">Entrar</button>
       </div>
     </div>
 
-    <!-- CARD: Entrada do link -->
-    <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-      <h2 class="font-semibold text-slate-800 mb-1">Cole o link do vídeo abaixo</h2>
-      <p class="text-sm text-slate-400 mb-5">
-        Funciona com qualquer vídeo público do YouTube com legendas ativadas.
-      </p>
+    <div id="form-cadastrar" class="hidden bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+          <input id="cad-nome" type="text" placeholder="Seu nome"
+            class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent"/>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+          <input id="cad-email" type="email" placeholder="seu@email.com"
+            class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent"/>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Senha</label>
+          <input id="cad-senha" type="password" placeholder="Mínimo 6 caracteres"
+            class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent"/>
+        </div>
+        <div id="cad-erro" class="text-red-500 text-sm hidden"></div>
+        <button onclick="fazerCadastro()" class="w-full bg-brand hover:bg-brand-dark text-white py-2.5 rounded-xl font-medium transition-colors">Criar conta</button>
+      </div>
+    </div>
+  </div>
+</div>
 
-      <input
-        id="urlInput"
-        type="text"
-        placeholder="https://www.youtube.com/watch?v=..."
-        class="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-800 placeholder-slate-300
-               focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent mb-3"
-      />
+<!-- ══════════ APP ══════════ -->
+<div id="app" class="hidden flex h-screen overflow-hidden">
 
-      <div class="flex gap-3">
-        <select id="langSelect"
-          class="px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-700 bg-white
-                 focus:outline-none focus:ring-2 focus:ring-red-500">
-          <option value="pt">🇧🇷 Português</option>
-          <option value="en">🇺🇸 English</option>
-          <option value="es">🇪🇸 Español</option>
-          <option value="fr">🇫🇷 Français</option>
-          <option value="de">🇩🇪 Deutsch</option>
-          <option value="ja">🇯🇵 日本語</option>
-        </select>
+  <!-- Sidebar -->
+  <aside class="sidebar bg-white border-r border-gray-100 flex flex-col h-full">
+    <div class="p-5 border-b border-gray-100">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 bg-brand rounded-lg flex items-center justify-center">
+          <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        </div>
+        <span class="font-bold text-gray-900 text-sm">TranscreveAí</span>
+      </div>
+    </div>
 
-        <button onclick="transcrever()"
-          class="flex-1 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-semibold
-                 py-3 px-5 rounded-xl transition-colors duration-150 text-sm flex items-center justify-center gap-2">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>
-          </svg>
-          Transcrever
+    <nav class="p-3 flex-1 overflow-y-auto scroll-thin">
+      <button onclick="navegar('dashboard')" id="nav-dashboard"
+        class="nav-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium mb-1 transition-all text-gray-600 hover:bg-gray-50">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h18M3 17h18"/></svg>
+        Todas as notas
+      </button>
+      <button onclick="navegar('nova')" id="nav-nova"
+        class="nav-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium mb-1 transition-all text-gray-600 hover:bg-gray-50">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Nova transcrição
+      </button>
+
+      <div class="mt-4 mb-2 px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fontes</div>
+
+      <button onclick="filtrarFonte('youtube')" id="nav-youtube"
+        class="nav-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium mb-1 transition-all text-gray-600 hover:bg-gray-50">
+        <svg class="w-4 h-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 00-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5a3 3 0 00-2.1 2.1C0 8.1 0 12 0 12s0 3.9.5 5.8a3 3 0 002.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 002.1-2.1C24 15.9 24 12 24 12s0-3.9-.5-5.8zM9.75 15.5v-7l6.25 3.5-6.25 3.5z"/></svg>
+        YouTube
+      </button>
+      <button onclick="filtrarFonte('arquivo')" id="nav-arquivo"
+        class="nav-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium mb-1 transition-all text-gray-600 hover:bg-gray-50">
+        <svg class="w-4 h-4 flex-shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+        Meus arquivos
+      </button>
+      <button onclick="filtrarFonte('plaud')" id="nav-plaud"
+        class="nav-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium mb-1 transition-all text-gray-600 hover:bg-gray-50">
+        <svg class="w-4 h-4 flex-shrink-0 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+        Plaud
+      </button>
+
+      <div class="mt-4 mb-2 px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Conta</div>
+      <button onclick="navegar('configuracoes')" id="nav-configuracoes"
+        class="nav-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium mb-1 transition-all text-gray-600 hover:bg-gray-50">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3" stroke-width="2"/></svg>
+        Configurações
+      </button>
+    </nav>
+
+    <div class="p-3 border-t border-gray-100">
+      <div class="flex items-center gap-2 px-3 py-2">
+        <div class="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center">
+          <span id="sidebar-inicial" class="text-brand text-xs font-bold">?</span>
+        </div>
+        <span id="sidebar-nome" class="text-sm text-gray-700 flex-1 truncate font-medium"></span>
+        <button onclick="fazerLogout()" title="Sair" class="text-gray-400 hover:text-red-500 transition-colors">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
         </button>
       </div>
     </div>
+  </aside>
 
-    <!-- CARD: Carregando -->
-    <div id="cardLoading" class="hidden bg-white rounded-2xl border border-slate-100 shadow-sm p-8">
-      <div class="flex flex-col items-center gap-4">
-        <div class="spinner"></div>
-        <div class="text-center">
-          <p id="msgLoading" class="text-sm text-slate-600 font-medium">Processando...</p>
-          <p class="text-xs text-slate-400 mt-1">Vídeos longos podem levar alguns minutos</p>
+  <!-- Conteúdo -->
+  <main class="flex-1 overflow-hidden flex flex-col">
+
+    <!-- DASHBOARD -->
+    <div id="pg-dashboard" class="hidden flex-1 overflow-y-auto scroll-thin p-8">
+      <div class="max-w-4xl mx-auto">
+        <div class="flex items-center justify-between mb-6">
+          <h2 id="dash-titulo" class="text-xl font-bold text-gray-900">Todas as notas</h2>
+          <button onclick="navegar('nova')" class="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Nova transcrição
+          </button>
+        </div>
+        <div id="lista-transcricoes" class="grid gap-3"></div>
+      </div>
+    </div>
+
+    <!-- NOVA TRANSCRIÇÃO -->
+    <div id="pg-nova" class="hidden flex-1 overflow-y-auto scroll-thin p-8">
+      <div class="max-w-2xl mx-auto">
+        <h2 class="text-xl font-bold text-gray-900 mb-6">Nova transcrição</h2>
+
+        <div class="flex gap-2 mb-6">
+          <button onclick="abaFonte('youtube')" id="fonte-youtube"
+            class="fonte-tab flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border-2 transition-all border-brand bg-indigo-50 text-brand">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 00-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5a3 3 0 00-2.1 2.1C0 8.1 0 12 0 12s0 3.9.5 5.8a3 3 0 002.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 002.1-2.1C24 15.9 24 12 24 12s0-3.9-.5-5.8zM9.75 15.5v-7l6.25 3.5-6.25 3.5z"/></svg>
+            YouTube
+          </button>
+          <button onclick="abaFonte('arquivo')" id="fonte-arquivo"
+            class="fonte-tab flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border-2 transition-all border-gray-200 text-gray-500 hover:border-gray-300">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+            Arquivo
+          </button>
+          <button onclick="abaFonte('plaud')" id="fonte-plaud"
+            class="fonte-tab flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border-2 transition-all border-gray-200 text-gray-500 hover:border-gray-300">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+            Plaud
+          </button>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+
+          <!-- YouTube -->
+          <div id="painel-youtube">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Link do vídeo</label>
+            <input id="yt-url" type="url" placeholder="https://youtube.com/watch?v=..."
+              class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent mb-4"/>
+            <div class="flex items-center gap-3 mb-5">
+              <label class="text-sm font-medium text-gray-700">Idioma:</label>
+              <select id="yt-idioma" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand">
+                <option value="pt">Português</option>
+                <option value="en">Inglês</option>
+                <option value="es">Espanhol</option>
+                <option value="fr">Francês</option>
+                <option value="de">Alemão</option>
+              </select>
+            </div>
+            <button onclick="transcreverYoutube()" id="btn-yt"
+              class="w-full bg-brand hover:bg-brand-dark text-white py-3 rounded-xl font-medium transition-colors">
+              Transcrever vídeo
+            </button>
+          </div>
+
+          <!-- Arquivo -->
+          <div id="painel-arquivo" class="hidden">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Arquivo de áudio ou vídeo</label>
+            <div onclick="document.getElementById('input-arquivo').click()"
+              class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-brand hover:bg-indigo-50 transition-all mb-4">
+              <svg class="w-10 h-10 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+              <p id="nome-arquivo" class="text-sm text-gray-500">Clique para selecionar</p>
+              <p class="text-xs text-gray-400 mt-1">MP3, MP4, M4A, WAV, OGG, WEBM — até 25 MB</p>
+            </div>
+            <input id="input-arquivo" type="file" accept=".mp3,.mp4,.m4a,.wav,.ogg,.webm,.mov,.mkv,.flac,.aac,.opus" class="hidden" onchange="selecionarArquivo(this)"/>
+            <div class="flex items-center gap-3 mb-5">
+              <label class="text-sm font-medium text-gray-700">Idioma:</label>
+              <select id="arq-idioma" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand">
+                <option value="pt">Português</option>
+                <option value="en">Inglês</option>
+                <option value="es">Espanhol</option>
+              </select>
+            </div>
+            <button onclick="transcreverArquivo()" id="btn-arq"
+              class="w-full bg-brand hover:bg-brand-dark text-white py-3 rounded-xl font-medium transition-colors">
+              Transcrever arquivo
+            </button>
+          </div>
+
+          <!-- Plaud -->
+          <div id="painel-plaud" class="hidden">
+            <div class="flex items-start gap-3 p-4 bg-green-50 border border-green-200 rounded-xl mb-5">
+              <svg class="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <div class="text-sm text-green-800">
+                <p class="font-semibold mb-1">Como conectar o Plaud</p>
+                <p>Você pode usar o sistema de duas formas: <strong>automático</strong> (o Plaud envia direto quando terminar a gravação) ou <strong>manual</strong> (exportar o arquivo do app e enviar aqui).</p>
+                <button onclick="navegar('configuracoes')" class="mt-2 text-green-700 underline font-medium text-xs">Ver URL do webhook automático →</button>
+              </div>
+            </div>
+
+            <p class="text-sm font-medium text-gray-700 mb-2">Upload manual de gravação Plaud</p>
+            <div onclick="document.getElementById('input-plaud').click()"
+              class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-green-400 hover:bg-green-50 transition-all mb-4">
+              <svg class="w-10 h-10 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+              <p id="nome-plaud" class="text-sm text-gray-500">Selecionar gravação Plaud</p>
+              <p class="text-xs text-gray-400 mt-1">M4A, MP3, WAV — áudio da reunião</p>
+            </div>
+            <input id="input-plaud" type="file" accept=".mp3,.m4a,.wav,.ogg,.aac,.opus" class="hidden" onchange="selecionarPlaud(this)"/>
+            <div class="flex items-center gap-3 mb-5">
+              <label class="text-sm font-medium text-gray-700">Idioma:</label>
+              <select id="plaud-idioma" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand">
+                <option value="pt">Português</option>
+                <option value="en">Inglês</option>
+                <option value="es">Espanhol</option>
+              </select>
+            </div>
+            <button onclick="transcreverPlaud()" id="btn-plaud"
+              class="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-medium transition-colors">
+              Transcrever gravação Plaud
+            </button>
+          </div>
+
+          <div id="nova-progresso" class="hidden mt-4 text-center">
+            <div class="inline-flex items-center gap-2 text-brand">
+              <svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="40 20"/></svg>
+              <span id="nova-progresso-msg" class="text-sm font-medium">Transcrevendo...</span>
+            </div>
+          </div>
+          <div id="nova-erro" class="hidden mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm"></div>
         </div>
       </div>
     </div>
 
-    <!-- CARD: Erro -->
-    <div id="cardErro" class="hidden bg-red-50 border border-red-200 rounded-2xl p-5">
-      <div class="flex items-start gap-3">
-        <svg class="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        <div>
-          <p class="text-sm font-semibold text-red-700">Não foi possível transcrever</p>
-          <p id="msgErro" class="text-sm text-red-600 mt-1"></p>
+    <!-- NOTA -->
+    <div id="pg-nota" class="hidden flex-1 overflow-hidden flex">
+
+      <div class="flex-1 overflow-y-auto scroll-thin p-6">
+        <div class="max-w-2xl mx-auto">
+          <div class="flex items-start justify-between mb-5 gap-4">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-2">
+                <span id="nota-fonte-badge" class="fonte-badge"></span>
+                <span id="nota-data" class="text-xs text-gray-400"></span>
+              </div>
+              <h2 id="nota-titulo" class="text-xl font-bold text-gray-900"></h2>
+            </div>
+            <div class="flex gap-2 flex-shrink-0">
+              <button onclick="copiarTranscricao()" title="Copiar" class="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-500 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              </button>
+              <button onclick="baixarTranscricao()" title="Baixar .txt" class="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-500 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              </button>
+              <button onclick="deletarNota()" title="Deletar" class="p-2 rounded-lg border border-red-100 hover:bg-red-50 text-red-400 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </div>
+          </div>
+          <div id="nota-segmentos" class="space-y-1 text-gray-800 text-sm leading-relaxed"></div>
         </div>
       </div>
-    </div>
 
-    <!-- CARD: Resultado -->
-    <div id="cardResultado" class="hidden space-y-4">
-
-      <!-- Info do vídeo -->
-      <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex gap-4 items-start">
-        <img id="thumbnail" src="" alt="Capa do vídeo"
-          class="w-28 h-16 object-cover rounded-xl flex-shrink-0 bg-slate-100"/>
-        <div class="min-w-0">
-          <h3 id="tituloVideo" class="font-semibold text-slate-900 text-sm leading-snug line-clamp-2"></h3>
-          <p id="canalVideo" class="text-xs text-slate-400 mt-1"></p>
-          <span id="badgeInfo"
-            class="inline-block mt-2 text-xs bg-green-100 text-green-700 px-2.5 py-0.5 rounded-full font-medium">
-          </span>
+      <!-- Chat -->
+      <div class="w-80 border-l border-gray-100 flex flex-col bg-white">
+        <div class="p-4 border-b border-gray-100">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 bg-brand rounded-lg flex items-center justify-center">
+              <svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+            </div>
+            <span class="text-sm font-semibold text-gray-900">Chat com IA</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">Pergunte sobre este conteúdo</p>
         </div>
-      </div>
 
-      <!-- Área de transcrição -->
-      <div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-
-        <!-- Barra de ações -->
-        <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-wrap gap-2">
-          <h3 class="font-semibold text-slate-800 text-sm">Transcrição</h3>
-          <div class="flex items-center gap-2 flex-wrap">
-            <button id="btnTimestamps" onclick="alternarTimestamps()"
-              class="text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition-colors">
-              ⏱ Timestamps
-            </button>
-            <button onclick="copiarTranscricao(this)"
-              class="text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition-colors">
-              📋 Copiar tudo
-            </button>
-            <button onclick="baixarTranscricao()"
-              class="text-xs px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors">
-              ⬇ Baixar .txt
-            </button>
+        <div id="chat-msgs" class="flex-1 overflow-y-auto scroll-thin p-3 space-y-3">
+          <div id="chat-placeholder" class="text-center text-xs text-gray-400 py-4">
+            Faça perguntas sobre a transcrição ou peça um resumo.
           </div>
         </div>
 
-        <!-- Texto da transcrição -->
-        <div id="transcriptContent"
-          class="p-5 max-h-[500px] overflow-y-auto text-sm text-slate-700 leading-relaxed space-y-0.5">
+        <div class="p-3 border-t border-gray-100">
+          <div class="flex gap-2">
+            <input id="chat-input" type="text" placeholder="Pergunte algo..."
+              onkeydown="if(event.key==='Enter')enviarChat()"
+              class="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"/>
+            <button onclick="enviarChat()" id="btn-chat"
+              class="p-2 bg-brand hover:bg-brand-dark text-white rounded-xl transition-colors">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+            </button>
+          </div>
+          <div id="chat-carregando" class="hidden text-xs text-gray-400 text-center mt-2">IA pensando...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIGURAÇÕES -->
+    <div id="pg-configuracoes" class="hidden flex-1 overflow-y-auto scroll-thin p-8">
+      <div class="max-w-2xl mx-auto">
+        <h2 class="text-xl font-bold text-gray-900 mb-6">Configurações</h2>
+
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-5">
+          <h3 class="font-semibold text-gray-800 mb-4">Minha conta</h3>
+          <div class="space-y-2 text-sm">
+            <div class="flex items-center gap-2 text-gray-600">
+              <span class="font-medium w-14">Nome:</span>
+              <span id="cfg-nome" class="text-gray-900"></span>
+            </div>
+            <div class="flex items-center gap-2 text-gray-600">
+              <span class="font-medium w-14">E-mail:</span>
+              <span id="cfg-email" class="text-gray-900"></span>
+            </div>
+          </div>
+          <button onclick="fazerLogout()" class="mt-4 text-sm text-red-500 hover:text-red-700 font-medium transition-colors">Sair da conta</button>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 bg-green-100 rounded-xl flex items-center justify-center">
+              <svg class="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+            </div>
+            <div>
+              <h3 class="font-semibold text-gray-800">Sincronização automática com Plaud</h3>
+              <p class="text-xs text-gray-400">Suas gravações chegam aqui automaticamente</p>
+            </div>
+          </div>
+
+          <div class="p-3 bg-gray-50 rounded-xl mb-4">
+            <p class="text-xs text-gray-500 mb-1.5 font-medium">Sua URL de webhook pessoal:</p>
+            <div class="flex items-center gap-2">
+              <code id="plaud-webhook-url" class="flex-1 text-xs text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 break-all font-mono">carregando...</code>
+              <button onclick="copiarWebhook()" class="flex-shrink-0 p-2 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors" title="Copiar">
+                <svg class="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="text-sm space-y-2">
+            <p class="font-medium text-gray-800">Como configurar no Plaud:</p>
+            <ol class="list-decimal list-inside space-y-1 text-gray-600 text-xs">
+              <li>Abra o app Plaud no celular</li>
+              <li>Vá em <strong>Configurações → Integrações → Webhook</strong></li>
+              <li>Cole a URL acima no campo de webhook</li>
+              <li>Quando terminar uma gravação, ela aparece aqui automaticamente na seção <strong>Plaud</strong></li>
+            </ol>
+            <div class="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-3">
+              ⚠️ O suporte a webhook pode variar conforme a versão do app Plaud. Se não encontrar essa opção, use o <strong>upload manual</strong> em "Nova transcrição → Plaud".
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
   </main>
+</div>
 
-  <script>
-    // Se estiver rodando no computador local usa localhost, senão usa o endereço do servidor na nuvem
-    const SERVIDOR = window.location.hostname === 'localhost'
-      ? 'http://localhost:8080'
-      : window.location.origin;
+<!-- Toast -->
+<div id="toast" class="hidden fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg z-50 fade-in"></div>
 
-    let dadosTranscricao = [];
-    let exibirTimestamps = true;
-    let tituloAtual = '';
+<script>
+const API = '';
+let app = { usuario: null, notaAtual: null, fonteAtual: 'youtube' };
 
-    // ── Utilitários ──────────────────────────────────────────────────────────
+// ── INIT ──────────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const r = await fetch(`${API}/api/auth/eu`, { credentials: 'include' });
+    const d = await r.json();
+    if (d.autenticado) { app.usuario = d; mostrarApp(); }
+    else mostrarAuth();
+  } catch { mostrarAuth(); }
+}
 
-    function extrairVideoId(url) {
-      const regex = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([^&\n?#]{11})/;
-      const match = url.match(regex);
-      return match ? match[1] : null;
-    }
+function mostrarAuth() {
+  document.getElementById('tela-auth').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+}
 
-    function formatarTempo(segundos) {
-      const m = Math.floor(segundos / 60).toString().padStart(2, '0');
-      const s = Math.floor(segundos % 60).toString().padStart(2, '0');
-      return `${m}:${s}`;
-    }
+function mostrarApp() {
+  document.getElementById('tela-auth').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  const n = app.usuario.nome || '';
+  document.getElementById('sidebar-nome').textContent = n;
+  document.getElementById('sidebar-inicial').textContent = n[0]?.toUpperCase() || '?';
+  navegar('dashboard');
+}
 
-    // ── Controles de interface ───────────────────────────────────────────────
+// ── AUTH ──────────────────────────────────────────────────────────────────────
+function mostrarAba(aba) {
+  const isEntrar = aba === 'entrar';
+  document.getElementById('form-entrar').classList.toggle('hidden', !isEntrar);
+  document.getElementById('form-cadastrar').classList.toggle('hidden', isEntrar);
+  ['entrar','cadastrar'].forEach(a => {
+    const btn = document.getElementById(`aba-${a}`);
+    const ativo = a === aba;
+    btn.classList.toggle('bg-white', ativo); btn.classList.toggle('shadow', ativo);
+    btn.classList.toggle('text-gray-900', ativo); btn.classList.toggle('text-gray-500', !ativo);
+  });
+}
 
-    function mostrarLoading(msg) {
-      document.getElementById('cardLoading').classList.remove('hidden');
-      document.getElementById('msgLoading').textContent = msg;
-      document.getElementById('cardErro').classList.add('hidden');
-      document.getElementById('cardResultado').classList.add('hidden');
-    }
+async function fazerLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const senha  = document.getElementById('login-senha').value;
+  const erroEl = document.getElementById('login-erro');
+  erroEl.classList.add('hidden');
+  const r = await fetch(`${API}/api/auth/entrar`, {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email, senha})
+  });
+  const d = await r.json();
+  if (d.sucesso) {
+    const eu = await (await fetch(`${API}/api/auth/eu`, {credentials:'include'})).json();
+    app.usuario = eu; mostrarApp();
+  } else { erroEl.textContent = d.erro; erroEl.classList.remove('hidden'); }
+}
 
-    function ocultarLoading() {
-      document.getElementById('cardLoading').classList.add('hidden');
-    }
+async function fazerCadastro() {
+  const nome  = document.getElementById('cad-nome').value.trim();
+  const email = document.getElementById('cad-email').value.trim();
+  const senha = document.getElementById('cad-senha').value;
+  const erroEl = document.getElementById('cad-erro');
+  erroEl.classList.add('hidden');
+  const r = await fetch(`${API}/api/auth/cadastrar`, {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({nome, email, senha})
+  });
+  const d = await r.json();
+  if (d.sucesso) {
+    const eu = await (await fetch(`${API}/api/auth/eu`, {credentials:'include'})).json();
+    app.usuario = eu; mostrarApp();
+  } else { erroEl.textContent = d.erro; erroEl.classList.remove('hidden'); }
+}
 
-    function mostrarErro(msg) {
-      ocultarLoading();
-      document.getElementById('cardErro').classList.remove('hidden');
-      document.getElementById('msgErro').textContent = msg;
-    }
+async function fazerLogout() {
+  await fetch(`${API}/api/auth/sair`, {method:'POST', credentials:'include'});
+  app = {usuario:null, notaAtual:null, fonteAtual:'youtube'};
+  mostrarAuth();
+}
 
-    // ── Status do servidor ───────────────────────────────────────────────────
+// ── NAVEGAÇÃO ─────────────────────────────────────────────────────────────────
+function navegar(pag) {
+  ['dashboard','nova','nota','configuracoes'].forEach(p => {
+    document.getElementById(`pg-${p}`).classList.add('hidden');
+  });
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    b.classList.remove('bg-indigo-50','text-brand');
+    b.classList.add('text-gray-600','hover:bg-gray-50');
+  });
+  document.getElementById(`pg-${pag}`).classList.remove('hidden');
+  const navId = `nav-${pag}`;
+  const btn = document.getElementById(navId);
+  if (btn) { btn.classList.add('bg-indigo-50','text-brand'); btn.classList.remove('text-gray-600','hover:bg-gray-50'); }
+  if (pag === 'dashboard') { document.getElementById('dash-titulo').textContent = 'Todas as notas'; carregarTranscricoes(null); }
+  if (pag === 'configuracoes') carregarConfiguracoes();
+  if (pag === 'nova') { document.getElementById('nova-erro').classList.add('hidden'); document.getElementById('nova-progresso').classList.add('hidden'); }
+}
 
-    async function verificarServidor() {
-      const dot   = document.getElementById('statusDot');
-      const texto = document.getElementById('statusTexto');
-      const aviso = document.getElementById('avisoServidor');
+function filtrarFonte(fonte) {
+  ['dashboard','nova','nota','configuracoes'].forEach(p => document.getElementById(`pg-${p}`).classList.add('hidden'));
+  document.querySelectorAll('.nav-btn').forEach(b => { b.classList.remove('bg-indigo-50','text-brand'); b.classList.add('text-gray-600','hover:bg-gray-50'); });
+  const btn = document.getElementById(`nav-${fonte}`);
+  if (btn) { btn.classList.add('bg-indigo-50','text-brand'); btn.classList.remove('text-gray-600','hover:bg-gray-50'); }
+  document.getElementById('pg-dashboard').classList.remove('hidden');
+  const nomes = {youtube:'YouTube', arquivo:'Meus arquivos', plaud:'Plaud'};
+  document.getElementById('dash-titulo').textContent = nomes[fonte] || fonte;
+  carregarTranscricoes(fonte);
+}
 
-      try {
-        const res = await fetch(`${SERVIDOR}/api/status`, { signal: AbortSignal.timeout(3000) });
-        const dados = await res.json();
-
-        if (dados.online && dados.groq_configurado) {
-          dot.className   = 'w-2 h-2 rounded-full bg-green-500';
-          texto.textContent = 'Servidor conectado';
-          aviso.classList.add('hidden');
-        } else if (dados.online && !dados.groq_configurado) {
-          dot.className   = 'w-2 h-2 rounded-full bg-amber-400';
-          texto.textContent = 'Chave Groq não configurada';
-          aviso.classList.remove('hidden');
-          document.querySelector('#avisoServidor p:last-child').textContent =
-            'O servidor está rodando, mas falta configurar a chave da API Groq no arquivo server.py.';
-        }
-      } catch {
-        dot.className   = 'w-2 h-2 rounded-full bg-red-400';
-        texto.textContent = 'Servidor offline';
-        aviso.classList.remove('hidden');
-      }
-    }
-
-    // ── Busca info do vídeo (título e thumbnail) ─────────────────────────────
-
-    async function buscarInfoVideo(videoId) {
-      const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Vídeo não encontrado, privado ou inválido.');
-      return await res.json();
-    }
-
-    // ── Renderização da transcrição ──────────────────────────────────────────
-
-    function renderizarTranscricao() {
-      const container = document.getElementById('transcriptContent');
-      container.innerHTML = dadosTranscricao.map(linha => `
-        <div class="flex gap-3 py-1.5 px-2 rounded-lg hover:bg-slate-50 transition-colors">
-          ${exibirTimestamps
-            ? `<span class="text-red-500 font-mono text-xs mt-0.5 flex-shrink-0 w-10 select-none">${formatarTempo(linha.inicio)}</span>`
-            : ''}
-          <span class="text-slate-700">${linha.texto}</span>
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+async function carregarTranscricoes(filtro) {
+  const lista = document.getElementById('lista-transcricoes');
+  lista.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">Carregando...</div>';
+  const r = await fetch(`${API}/api/transcricoes`, {credentials:'include'});
+  let items = await r.json();
+  if (filtro) items = items.filter(t => t.fonte.includes(filtro));
+  if (!items.length) {
+    lista.innerHTML = `<div class="text-center py-16 text-gray-400">
+      <svg class="w-12 h-12 mx-auto mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      <p class="font-medium">Nenhuma nota ainda</p><p class="text-sm mt-1">Crie sua primeira transcrição</p></div>`;
+    return;
+  }
+  lista.innerHTML = items.map(t => {
+    const b = fonteInfo(t.fonte);
+    const data = new Date(t.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
+    return `<div onclick="abrirNota(${t.id})" class="bg-white rounded-xl border border-gray-100 p-4 cursor-pointer hover:shadow-md hover:border-brand transition-all fade-in">
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1.5"><span class="fonte-badge ${b.cls}">${b.label}</span><span class="text-xs text-gray-400">${data}</span></div>
+          <h3 class="font-semibold text-gray-900 text-sm truncate">${t.titulo}</h3>
         </div>
-      `).join('');
-    }
+        <svg class="w-4 h-4 text-gray-300 flex-shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      </div></div>`;
+  }).join('');
+}
 
-    // ── Ações dos botões ────────────────────────────────────────────────────
+function fonteInfo(fonte) {
+  if (fonte.includes('youtube')) return {cls:'fonte-youtube', label:'YouTube'};
+  if (fonte === 'plaud')         return {cls:'fonte-plaud',   label:'Plaud'};
+  return                                {cls:'fonte-arquivo', label:'Arquivo'};
+}
 
-    function alternarTimestamps() {
-      exibirTimestamps = !exibirTimestamps;
-      const btn = document.getElementById('btnTimestamps');
-      btn.classList.toggle('bg-red-50', exibirTimestamps);
-      btn.classList.toggle('border-red-300', exibirTimestamps);
-      btn.classList.toggle('text-red-600', exibirTimestamps);
-      renderizarTranscricao();
-    }
+// ── NOTA ──────────────────────────────────────────────────────────────────────
+async function abrirNota(tid) {
+  const r = await fetch(`${API}/api/transcricoes/${tid}`, {credentials:'include'});
+  const t = await r.json();
+  app.notaAtual = t;
+  const b = fonteInfo(t.fonte);
+  document.getElementById('nota-fonte-badge').textContent = b.label;
+  document.getElementById('nota-fonte-badge').className = `fonte-badge ${b.cls}`;
+  document.getElementById('nota-titulo').textContent = t.titulo;
+  document.getElementById('nota-data').textContent = new Date(t.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'});
+  const segs = JSON.parse(t.segmentos);
+  document.getElementById('nota-segmentos').innerHTML = segs.map(s =>
+    `<div class="flex gap-3 py-1.5 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded-lg px-2 -mx-2 transition-colors">
+      <span class="text-xs text-gray-400 font-mono pt-0.5 w-10 flex-shrink-0">${fmtTempo(s.inicio)}</span>
+      <span class="text-gray-800 leading-relaxed">${s.texto}</span>
+    </div>`
+  ).join('');
+  // Carrega chat
+  const cEl = document.getElementById('chat-msgs');
+  cEl.innerHTML = '<div id="chat-placeholder" class="text-center text-xs text-gray-400 py-4">Faça perguntas sobre a transcrição ou peça um resumo.</div>';
+  const cr = await fetch(`${API}/api/transcricoes/${tid}/chat`, {credentials:'include'});
+  const msgs = await cr.json();
+  msgs.forEach(m => adicionarBolha(m.papel, m.conteudo));
+  navegar('nota');
+}
 
-    function copiarTranscricao(botao) {
-      const texto = dadosTranscricao.map(l =>
-        exibirTimestamps ? `[${formatarTempo(l.inicio)}] ${l.texto}` : l.texto
-      ).join('\n');
-      navigator.clipboard.writeText(texto).then(() => {
-        const original = botao.textContent;
-        botao.textContent = '✅ Copiado!';
-        setTimeout(() => botao.textContent = original, 2000);
-      });
-    }
+function fmtTempo(s) {
+  const m = Math.floor(s/60), sec = Math.floor(s%60);
+  return `${m}:${String(sec).padStart(2,'0')}`;
+}
 
-    function baixarTranscricao() {
-      const texto = dadosTranscricao.map(l => `[${formatarTempo(l.inicio)}] ${l.texto}`).join('\n');
-      const blob = new Blob([texto], { type: 'text/plain;charset=utf-8' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `${tituloAtual.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'transcricao'}.txt`;
-      link.click();
-    }
+function copiarTranscricao() {
+  if (!app.notaAtual) return;
+  const segs = JSON.parse(app.notaAtual.segmentos);
+  navigator.clipboard.writeText(segs.map(s=>`[${fmtTempo(s.inicio)}] ${s.texto}`).join('\n'));
+  mostrarToast('Copiado!');
+}
 
-    // ── Função principal ─────────────────────────────────────────────────────
+function baixarTranscricao() {
+  if (!app.notaAtual) return;
+  const segs = JSON.parse(app.notaAtual.segmentos);
+  const txt  = segs.map(s=>`[${fmtTempo(s.inicio)}] ${s.texto}`).join('\n');
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(new Blob([txt],{type:'text/plain'}));
+  a.download = `${app.notaAtual.titulo}.txt`;
+  a.click();
+}
 
-    async function transcrever() {
-      const url    = document.getElementById('urlInput').value.trim();
-      const idioma = document.getElementById('langSelect').value;
+async function deletarNota() {
+  if (!app.notaAtual) return;
+  if (!confirm('Deletar esta transcrição? Esta ação não pode ser desfeita.')) return;
+  await fetch(`${API}/api/transcricoes/${app.notaAtual.id}`, {method:'DELETE', credentials:'include'});
+  app.notaAtual = null;
+  navegar('dashboard');
+  mostrarToast('Transcrição deletada.');
+}
 
-      if (!url) { mostrarErro('Cole um link do YouTube antes de continuar.'); return; }
-
-      const videoId = extrairVideoId(url);
-      if (!videoId) { mostrarErro('Link inválido. Use youtube.com/watch?v=... ou youtu.be/...'); return; }
-
-      mostrarLoading('Buscando informações do vídeo...');
-
-      try {
-        // PASSO 1: Título e thumbnail (YouTube oEmbed, sem autenticação)
-        const info = await buscarInfoVideo(videoId);
-        tituloAtual = info.title;
-        document.getElementById('tituloVideo').textContent = info.title;
-        document.getElementById('canalVideo').textContent  = info.author_name;
-        document.getElementById('thumbnail').src           = info.thumbnail_url;
-
-        // PASSO 2: Buscar legendas ou transcrever com IA
-        mostrarLoading('Buscando legendas...');
-
-        const resposta = await fetch(`${SERVIDOR}/api/transcrever`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, idioma }),
-        });
-
-        // Se demorar mais que alguns segundos, avisa que está usando IA
-        const timerIA = setTimeout(() => {
-          mostrarLoading('Transcrevendo com IA... isso pode levar 1 a 2 minutos ⏳');
-        }, 5000);
-
-        const resultado = await resposta.json();
-        clearTimeout(timerIA);
-
-        if (!resposta.ok || resultado.erro) {
-          throw new Error(resultado.erro || 'Erro desconhecido no servidor.');
-        }
-
-        dadosTranscricao = resultado.segmentos;
-
-        const fonteLabel = resultado.fonte === 'legendas'
-          ? '📄 YouTube Legendas'
-          : '🤖 IA (Groq Whisper)';
-        document.getElementById('badgeInfo').textContent =
-          `✅ ${resultado.total} segmentos · ${fonteLabel}`;
-
-        ocultarLoading();
-        renderizarTranscricao();
-        document.getElementById('cardResultado').classList.remove('hidden');
-
-      } catch (erro) {
-        mostrarErro(erro.message || 'Erro inesperado. Verifique se o servidor está rodando.');
-      }
-    }
-
-    // ── Inicialização ────────────────────────────────────────────────────────
-
-    document.addEventListener('DOMContentLoaded', () => {
-      verificarServidor();
-      document.getElementById('urlInput').addEventListener('keydown', e => {
-        if (e.key === 'Enter') transcrever();
-      });
+// ── CHAT ──────────────────────────────────────────────────────────────────────
+async function enviarChat() {
+  const input = document.getElementById('chat-input');
+  const msg   = input.value.trim();
+  if (!msg || !app.notaAtual) return;
+  input.value = '';
+  adicionarBolha('user', msg);
+  const ld = document.getElementById('chat-carregando');
+  const btn = document.getElementById('btn-chat');
+  ld.classList.remove('hidden'); btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/api/transcricoes/${app.notaAtual.id}/chat`, {
+      method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({mensagem: msg})
     });
-  </script>
+    const d = await r.json();
+    adicionarBolha('assistant', d.resposta || '⚠️ ' + (d.erro || 'Erro'));
+  } catch { adicionarBolha('assistant', '⚠️ Erro de conexão.'); }
+  finally { ld.classList.add('hidden'); btn.disabled = false; }
+}
 
+function adicionarBolha(papel, texto) {
+  const c = document.getElementById('chat-msgs');
+  const ph = document.getElementById('chat-placeholder');
+  if (ph) ph.remove();
+  const div = document.createElement('div');
+  div.className = `fade-in flex ${papel==='user' ? 'justify-end' : 'justify-start'}`;
+  div.innerHTML = `<div class="max-w-[85%] text-xs px-3 py-2 ${papel==='user' ? 'chat-bubble-user' : 'chat-bubble-ai'}">${texto.replace(/\n/g,'<br>')}</div>`;
+  c.appendChild(div);
+  c.scrollTop = c.scrollHeight;
+}
+
+// ── NOVA TRANSCRIÇÃO ──────────────────────────────────────────────────────────
+function abaFonte(fonte) {
+  app.fonteAtual = fonte;
+  ['youtube','arquivo','plaud'].forEach(p => {
+    document.getElementById(`painel-${p}`).classList.add('hidden');
+    const tab = document.getElementById(`fonte-${p}`);
+    tab.classList.remove('border-brand','bg-indigo-50','text-brand');
+    tab.classList.add('border-gray-200','text-gray-500');
+  });
+  document.getElementById(`painel-${fonte}`).classList.remove('hidden');
+  const a = document.getElementById(`fonte-${fonte}`);
+  a.classList.add('border-brand','bg-indigo-50','text-brand');
+  a.classList.remove('border-gray-200','text-gray-500');
+  document.getElementById('nova-erro').classList.add('hidden');
+}
+
+function selecionarArquivo(i) { document.getElementById('nome-arquivo').textContent = i.files[0]?.name || 'Clique para selecionar'; }
+function selecionarPlaud(i)   { document.getElementById('nome-plaud').textContent   = i.files[0]?.name || 'Selecionar gravação'; }
+
+function mostrarProgresso(msg) {
+  document.getElementById('nova-progresso-msg').textContent = msg;
+  document.getElementById('nova-progresso').classList.remove('hidden');
+  document.getElementById('nova-erro').classList.add('hidden');
+}
+function mostrarErroNova(msg) {
+  document.getElementById('nova-progresso').classList.add('hidden');
+  const el = document.getElementById('nova-erro');
+  el.textContent = msg; el.classList.remove('hidden');
+}
+
+async function transcreverYoutube() {
+  const url    = document.getElementById('yt-url').value.trim();
+  const idioma = document.getElementById('yt-idioma').value;
+  if (!url) { mostrarErroNova('Cole o link do vídeo.'); return; }
+  mostrarProgresso('Buscando transcrição...');
+  document.getElementById('btn-yt').disabled = true;
+  const timer = setTimeout(() => mostrarProgresso('Transcrevendo com IA... (pode demorar alguns minutos)'), 5000);
+  try {
+    const r = await fetch(`${API}/api/transcrever/youtube`, {
+      method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({url, idioma})
+    });
+    const d = await r.json();
+    clearTimeout(timer);
+    if (d.sucesso) {
+      document.getElementById('nova-progresso').classList.add('hidden');
+      mostrarToast(`✓ "${d.titulo}" transcrito!`);
+      document.getElementById('yt-url').value = '';
+      await abrirNota(d.id);
+    } else mostrarErroNova(d.erro || 'Erro desconhecido.');
+  } catch { clearTimeout(timer); mostrarErroNova('Erro de conexão.'); }
+  finally { document.getElementById('btn-yt').disabled = false; }
+}
+
+async function transcreverArquivo() {
+  const input  = document.getElementById('input-arquivo');
+  const idioma = document.getElementById('arq-idioma').value;
+  if (!input.files.length) { mostrarErroNova('Selecione um arquivo.'); return; }
+  mostrarProgresso('Enviando e transcrevendo...');
+  document.getElementById('btn-arq').disabled = true;
+  const form = new FormData();
+  form.append('arquivo', input.files[0]); form.append('idioma', idioma); form.append('fonte', 'arquivo');
+  try {
+    const r = await fetch(`${API}/api/transcrever/arquivo`, {method:'POST', credentials:'include', body:form});
+    const d = await r.json();
+    if (d.sucesso) {
+      document.getElementById('nova-progresso').classList.add('hidden');
+      mostrarToast(`✓ "${d.titulo}" transcrito!`);
+      input.value = ''; document.getElementById('nome-arquivo').textContent = 'Clique para selecionar';
+      await abrirNota(d.id);
+    } else mostrarErroNova(d.erro || 'Erro desconhecido.');
+  } catch { mostrarErroNova('Erro de conexão.'); }
+  finally { document.getElementById('btn-arq').disabled = false; }
+}
+
+async function transcreverPlaud() {
+  const input  = document.getElementById('input-plaud');
+  const idioma = document.getElementById('plaud-idioma').value;
+  if (!input.files.length) { mostrarErroNova('Selecione um arquivo do Plaud.'); return; }
+  mostrarProgresso('Transcrevendo gravação Plaud...');
+  document.getElementById('btn-plaud').disabled = true;
+  const form = new FormData();
+  form.append('arquivo', input.files[0]); form.append('idioma', idioma); form.append('fonte', 'plaud');
+  try {
+    const r = await fetch(`${API}/api/transcrever/arquivo`, {method:'POST', credentials:'include', body:form});
+    const d = await r.json();
+    if (d.sucesso) {
+      document.getElementById('nova-progresso').classList.add('hidden');
+      mostrarToast(`✓ Gravação Plaud "${d.titulo}" transcrita!`);
+      input.value = ''; document.getElementById('nome-plaud').textContent = 'Selecionar gravação Plaud';
+      await abrirNota(d.id);
+    } else mostrarErroNova(d.erro || 'Erro desconhecido.');
+  } catch { mostrarErroNova('Erro de conexão.'); }
+  finally { document.getElementById('btn-plaud').disabled = false; }
+}
+
+// ── CONFIGURAÇÕES ─────────────────────────────────────────────────────────────
+function carregarConfiguracoes() {
+  const u = app.usuario; if (!u) return;
+  document.getElementById('cfg-nome').textContent  = u.nome;
+  document.getElementById('cfg-email').textContent = u.email;
+  document.getElementById('plaud-webhook-url').textContent = u.plaud_webhook_url || 'Não disponível';
+}
+
+function copiarWebhook() {
+  const url = document.getElementById('plaud-webhook-url').textContent;
+  navigator.clipboard.writeText(url);
+  mostrarToast('URL copiada!');
+}
+
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+function mostrarToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.remove('hidden');
+  setTimeout(() => t.classList.add('hidden'), 3000);
+}
+
+init();
+</script>
 </body>
 </html>
