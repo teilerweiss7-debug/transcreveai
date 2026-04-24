@@ -5,3 +5,4 @@ groq
 requests
 gunicorn
 youtube-transcript-api
+pytubefix

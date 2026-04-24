@@ -168,7 +168,27 @@ def _parsear_json3(caminho):
         return None
 
 
-# ── MÉTODO 3: yt-dlp áudio + Groq ────────────────────────────────────────────
+# ── MÉTODO 3: pytubefix áudio + Groq (usa API Android, bypassa bot detection) ─
+
+def baixar_via_pytubefix(url, pasta):
+    print('[pytubefix] tentando download de áudio')
+    try:
+        from pytubefix import YouTube
+        yt = YouTube(url, client='ANDROID')
+        audio = yt.streams.filter(only_audio=True).order_by('bitrate').last()
+        if not audio:
+            print('[pytubefix] nenhum stream de áudio encontrado')
+            return None
+        destino = audio.download(output_path=pasta, filename='audio_pyt')
+        if os.path.exists(destino) and os.path.getsize(destino) > 1000:
+            print(f'[pytubefix] OK: {destino} ({os.path.getsize(destino)} bytes)')
+            return destino
+    except Exception as e:
+        print(f'[pytubefix] erro: {e}')
+    return None
+
+
+# ── MÉTODO 4: yt-dlp áudio + Groq ────────────────────────────────────────────
 
 def baixar_via_ytdlp(url, pasta):
     print('[ytdlp-audio] iniciando download')
@@ -274,9 +294,14 @@ def transcrever():
         if not GROQ_API_KEY:
             return jsonify({'erro': 'Vídeo sem legendas e chave Groq não configurada.'}), 500
 
-        # MÉTODO 3: yt-dlp áudio + Groq
+        # MÉTODOS 3 e 4: áudio + Groq
         with tempfile.TemporaryDirectory() as pasta_temp:
-            arquivo_audio = baixar_via_ytdlp(url, pasta_temp)
+            # Tenta pytubefix primeiro (API Android, menos bloqueada)
+            arquivo_audio = baixar_via_pytubefix(url, pasta_temp)
+
+            # Fallback: yt-dlp com cookies
+            if not arquivo_audio:
+                arquivo_audio = baixar_via_ytdlp(url, pasta_temp)
 
             if not arquivo_audio:
                 print('=== Todos os métodos falharam ===')
