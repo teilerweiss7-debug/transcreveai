@@ -1,5 +1,5 @@
 """
-TranscreveAí — Plataforma de Aprendizado
+Transcreve IA — Plataforma de Aprendizado
 """
 
 import os, re, glob, json, shutil, tempfile, sqlite3, secrets
@@ -680,7 +680,7 @@ def status():
 
 
 if __name__ == '__main__':
-    print('\n  TranscreveAí — Servidor rodando!')
+    print('\n  Transcreve IA — Servidor rodando!')
     print('  Acesse: http://localhost:8080\n')
     porta = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=porta, debug=False)
