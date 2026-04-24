@@ -65,7 +65,7 @@
     <div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
       <h2 class="font-semibold text-slate-800 mb-1">Cole o link do vídeo abaixo</h2>
       <p class="text-sm text-slate-400 mb-5">
-        Funciona com qualquer vídeo público do YouTube — mesmo sem legenda.
+        Funciona com qualquer vídeo público do YouTube com legendas ativadas.
       </p>
 
       <input
@@ -319,8 +319,8 @@
         document.getElementById('canalVideo').textContent  = info.author_name;
         document.getElementById('thumbnail').src           = info.thumbnail_url;
 
-        // PASSO 2: Baixar áudio e transcrever via servidor local
-        mostrarLoading('Baixando áudio e transcrevendo com IA... (pode levar 1-2 min)');
+        // PASSO 2: Buscar legendas ou transcrever com IA
+        mostrarLoading('Buscando legendas...');
 
         const resposta = await fetch(`${SERVIDOR}/api/transcrever`, {
           method: 'POST',
@@ -328,7 +328,13 @@
           body: JSON.stringify({ url, idioma }),
         });
 
+        // Se demorar mais que alguns segundos, avisa que está usando IA
+        const timerIA = setTimeout(() => {
+          mostrarLoading('Transcrevendo com IA... isso pode levar 1 a 2 minutos ⏳');
+        }, 5000);
+
         const resultado = await resposta.json();
+        clearTimeout(timerIA);
 
         if (!resposta.ok || resultado.erro) {
           throw new Error(resultado.erro || 'Erro desconhecido no servidor.');
@@ -336,8 +342,11 @@
 
         dadosTranscricao = resultado.segmentos;
 
+        const fonteLabel = resultado.fonte === 'legendas'
+          ? '📄 YouTube Legendas'
+          : '🤖 IA (Groq Whisper)';
         document.getElementById('badgeInfo').textContent =
-          `✅ ${resultado.total} segmentos transcritos · Groq Whisper`;
+          `✅ ${resultado.total} segmentos · ${fonteLabel}`;
 
         ocultarLoading();
         renderizarTranscricao();

@@ -20,21 +20,13 @@ CORS(app)
 
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
-INVIDIOUS_INSTANCES = [
-    'https://invidious.io',
-    'https://inv.nadeko.net',
-    'https://invidious.privacyredirect.com',
-    'https://yt.cdaut.de',
-    'https://invidious.nerdvpn.de',
-]
-
 
 def extrair_video_id(url):
     match = re.search(r'(?:v=|youtu\.be/|embed/)([a-zA-Z0-9_-]{11})', url)
     return match.group(1) if match else None
 
 
-# ── MÉTODO 1: Legendas do YouTube (rápido, confiável) ────────────────────────
+# ── MÉTODO 1: Legendas do YouTube (rápido, sem IA) ───────────────────────────
 
 def obter_legendas_xml(video_id, idioma):
     """Busca legendas via timedtext API. Retorna XML ou None."""
@@ -80,85 +72,77 @@ def parsear_legendas(xml_texto):
 # ── MÉTODO 2: Download de áudio via cobalt.tools + Groq ──────────────────────
 
 def baixar_via_cobalt(url, pasta):
-    """Baixa áudio via cobalt.tools — serviço gratuito que bypassa bloqueios."""
-    try:
-        r = requests.post(
-            'https://api.cobalt.tools/',
-            json={'url': url, 'downloadMode': 'audio', 'audioFormat': 'opus'},
-            headers={
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0',
-            },
-            timeout=30,
-        )
-        if r.status_code != 200:
-            return None
-        dados = r.json()
-        status = dados.get('status')
-        download_url = dados.get('url')
-        if status not in ('stream', 'redirect', 'tunnel') or not download_url:
-            return None
-        destino = os.path.join(pasta, 'audio.opus')
-        with requests.get(download_url, stream=True, timeout=120) as dl:
-            dl.raise_for_status()
-            with open(destino, 'wb') as f:
-                shutil.copyfileobj(dl.raw, f)
-        if os.path.getsize(destino) > 1000:
-            return destino
-    except Exception:
-        pass
-    return None
+    """Baixa áudio via cobalt.tools."""
+    formatos = ['mp3', 'opus', 'best']
 
-
-# ── MÉTODO 3: Download de áudio via Invidious + Groq ─────────────────────────
-
-def baixar_via_invidious(video_id, pasta):
-    """Baixa áudio via Invidious API."""
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'}
-
-    for instancia in INVIDIOUS_INSTANCES:
+    for fmt in formatos:
         try:
-            r = requests.get(f'{instancia}/api/v1/videos/{video_id}', timeout=15, headers=headers)
+            r = requests.post(
+                'https://api.cobalt.tools/',
+                json={'url': url, 'downloadMode': 'audio', 'audioFormat': fmt},
+                headers={
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0',
+                },
+                timeout=30,
+            )
             if r.status_code != 200:
                 continue
+
             dados = r.json()
-            audios = [f for f in dados.get('adaptiveFormats', []) if 'audio' in f.get('type', '')]
-            if not audios:
+            status = dados.get('status')
+            download_url = dados.get('url')
+
+            if status not in ('stream', 'redirect') or not download_url:
                 continue
-            melhor = sorted(audios, key=lambda x: x.get('bitrate', 0), reverse=True)[0]
-            url_audio = melhor.get('url', '')
-            if not url_audio:
-                continue
-            ext = '.webm' if 'webm' in melhor.get('type', '') else '.m4a'
+
+            ext = '.mp3' if fmt == 'mp3' else '.opus'
             destino = os.path.join(pasta, f'audio{ext}')
-            with requests.get(url_audio, stream=True, timeout=120, headers=headers) as dl:
+
+            with requests.get(download_url, stream=True, timeout=180) as dl:
                 dl.raise_for_status()
                 with open(destino, 'wb') as f:
                     shutil.copyfileobj(dl.raw, f)
+
             if os.path.getsize(destino) > 1000:
                 return destino
+
         except Exception:
             continue
+
     return None
 
 
-def baixar_via_ytdlp(url, pasta, caminho_cookies=None):
-    """Baixa áudio via yt-dlp (último recurso)."""
+def baixar_via_ytdlp(url, pasta):
+    """Baixa áudio via yt-dlp (fallback)."""
     opcoes = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(pasta, 'audio.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
     }
-    if caminho_cookies:
-        opcoes['cookiefile'] = caminho_cookies
 
-    with yt_dlp.YoutubeDL(opcoes) as ydl:
-        ydl.download([url])
+    cookies_path = '/etc/secrets/youtube_cookies.txt'
+    if os.path.exists(cookies_path):
+        opcoes['cookiefile'] = cookies_path
+    elif os.environ.get('YOUTUBE_COOKIES'):
+        tc = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        tc.write(os.environ['YOUTUBE_COOKIES'])
+        tc.close()
+        opcoes['cookiefile'] = tc.name
 
-    arquivos = glob.glob(os.path.join(pasta, 'audio.*'))
-    return arquivos[0] if arquivos else None
+    try:
+        with yt_dlp.YoutubeDL(opcoes) as ydl:
+            ydl.download([url])
+        arquivos = glob.glob(os.path.join(pasta, 'audio.*'))
+        return arquivos[0] if arquivos else None
+    except Exception:
+        return None
+    finally:
+        tmp = opcoes.get('cookiefile')
+        if tmp and tmp != cookies_path and os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def transcrever_audio_groq(arquivo_audio, idioma):
@@ -217,15 +201,13 @@ def transcrever():
 
     if not url:
         return jsonify({'erro': 'Nenhum link foi enviado.'}), 400
-    if not GROQ_API_KEY:
-        return jsonify({'erro': 'Chave da API Groq não configurada.'}), 500
 
     video_id = extrair_video_id(url)
     if not video_id:
         return jsonify({'erro': 'Link do YouTube inválido.'}), 400
 
     try:
-        # TENTATIVA 1: Legendas do YouTube (rápido, sem download de áudio)
+        # TENTATIVA 1: Legendas do YouTube (instantâneo, sem IA)
         xml_legendas = obter_legendas_xml(video_id, idioma)
         if xml_legendas:
             segmentos = parsear_legendas(xml_legendas)
@@ -234,46 +216,26 @@ def transcrever():
                     'sucesso': True,
                     'segmentos': segmentos,
                     'total': len(segmentos),
+                    'fonte': 'legendas',
                 })
 
-        # TENTATIVA 2, 3 e 4: Download de áudio + Groq Whisper
-        with tempfile.TemporaryDirectory() as pasta_temp:
-            arquivo_audio = None
+        # Para a rota de áudio, precisa da chave Groq
+        if not GROQ_API_KEY:
+            return jsonify({
+                'erro': 'Este vídeo não tem legendas disponíveis e a chave Groq não está configurada para usar a IA.'
+            }), 500
 
-            # Tenta cobalt.tools primeiro (mais confiável)
+        # TENTATIVA 2: cobalt.tools + Groq Whisper
+        with tempfile.TemporaryDirectory() as pasta_temp:
             arquivo_audio = baixar_via_cobalt(url, pasta_temp)
 
-            # Tenta Invidious se cobalt falhar
+            # TENTATIVA 3: yt-dlp como último recurso
             if not arquivo_audio:
-                arquivo_audio = baixar_via_invidious(video_id, pasta_temp)
-
-            # Fallback: yt-dlp com cookies
-            if not arquivo_audio:
-                CAMINHO_SECRET = '/etc/secrets/youtube_cookies.txt'
-                cookies_conteudo = ''
-                temp_cookies = None
-
-                if os.path.exists(CAMINHO_SECRET):
-                    with open(CAMINHO_SECRET, 'r') as f:
-                        cookies_conteudo = f.read()
-                else:
-                    cookies_conteudo = os.environ.get('YOUTUBE_COOKIES', '')
-
-                if cookies_conteudo:
-                    tc = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                    tc.write(cookies_conteudo)
-                    tc.close()
-                    temp_cookies = tc.name
-
-                try:
-                    arquivo_audio = baixar_via_ytdlp(url, pasta_temp, temp_cookies)
-                finally:
-                    if temp_cookies:
-                        os.unlink(temp_cookies)
+                arquivo_audio = baixar_via_ytdlp(url, pasta_temp)
 
             if not arquivo_audio:
                 return jsonify({
-                    'erro': 'Este vídeo não tem legendas e não foi possível baixar o áudio. Tente outro vídeo público.'
+                    'erro': 'Este vídeo não tem legendas e não foi possível baixar o áudio. Tente um vídeo público diferente.'
                 }), 500
 
             segmentos = transcrever_audio_groq(arquivo_audio, idioma)
@@ -284,6 +246,7 @@ def transcrever():
                 'sucesso': True,
                 'segmentos': segmentos,
                 'total': len(segmentos),
+                'fonte': 'audio_ia',
             })
 
     except Exception as e:
@@ -291,10 +254,8 @@ def transcrever():
 
 
 if __name__ == '__main__':
-    print('')
-    print('  TranscreveAí — Servidor rodando!')
+    print('\n  TranscreveAí — Servidor rodando!')
     print('  Acesse: http://localhost:8080')
-    print('  Para parar: Ctrl+C')
-    print('')
+    print('  Para parar: Ctrl+C\n')
     porta = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=porta)
+    app.run(host='0.0.0.0', port=porta, debug=False)
