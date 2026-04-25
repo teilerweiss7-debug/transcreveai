@@ -24,9 +24,11 @@ _USE_PG       = bool(DATABASE_URL)
 if _USE_PG:
     import psycopg2
     import psycopg2.extras
+    _IntegrityError = psycopg2.IntegrityError
 else:
     import sqlite3
     _DB_PATH = os.environ.get('DB_PATH', '/tmp/transcrevai.db')
+    _IntegrityError = sqlite3.IntegrityError
 
 
 # ── DATABASE — wrapper compatível SQLite / PostgreSQL ─────────────────────────
@@ -71,7 +73,7 @@ class _DB:
             sql = (sql
                    .replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY')
                    .replace("datetime('now')", 'NOW()')
-                   .replace('TEXT DEFAULT (NOW())', "TEXT DEFAULT NOW()"))
+                   .replace('TEXT DEFAULT (NOW())', "TEXT DEFAULT (NOW()::TEXT)"))
             cur = self._conn.cursor()
             for stmt in [s.strip() for s in sql.split(';') if s.strip()]:
                 cur.execute(stmt)
@@ -165,7 +167,7 @@ def cadastrar():
         session['user_id'] = user['id']
         session['nome'] = user['nome']
         return jsonify({'sucesso': True, 'nome': user['nome']})
-    except sqlite3.IntegrityError:
+    except _IntegrityError:
         return jsonify({'erro': 'Este e-mail já está cadastrado.'}), 400
 
 
