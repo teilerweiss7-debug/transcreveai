@@ -14,7 +14,12 @@ import requests
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # aceita até 500 MB
-CORS(app, supports_credentials=True)
+
+# Permite o frontend Vercel fazer requisições com cookies
+_FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+CORS(app, supports_credentials=True, origins=[_FRONTEND_URL, 'http://localhost:3000'])
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE']   = True
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-fixo-local')
 
 GROQ_API_KEY  = os.environ.get('GROQ_API_KEY', '')

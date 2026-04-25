@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #F8F9FC;
+}
+
+.sidebar {
+  min-width: 240px;
+  max-width: 240px;
+}
+
+.scroll-thin::-webkit-scrollbar { width: 4px; }
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }
+.scroll-thin::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+
+.chat-bubble-user {
+  background: #6C63FF;
+  color: white;
+  border-radius: 18px 18px 4px 18px;
+}
+
+.chat-bubble-ai {
+  background: white;
+  color: #1f2937;
+  border-radius: 18px 18px 18px 4px;
+  border: 1px solid #e5e7eb;
+}
+
+.fade-in {
+  animation: fadeIn 0.25s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.fonte-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.fonte-youtube { background: #FEE2E2; color: #DC2626; }
+.fonte-arquivo { background: #DBEAFE; color: #2563EB; }
+.fonte-plaud   { background: #D1FAE5; color: #059669; }
