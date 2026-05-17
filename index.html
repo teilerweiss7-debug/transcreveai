@@ -702,24 +702,37 @@ async function transcreverYoutube() {
   finally { document.getElementById('btn-yt').disabled = false; }
 }
 
+async function aguardarJob(jobId) {
+  // Fica verificando a cada 5 segundos se o servidor terminou de processar
+  while (true) {
+    await new Promise(r => setTimeout(r, 5000));
+    const r = await fetch(`${API}/api/transcricao/job/${jobId}`, {credentials:'include'});
+    const d = await r.json();
+    if (d.status === 'done') return d.resultado;
+    if (d.status === 'error') throw new Error(d.erro || 'Erro no processamento.');
+    if (d.progresso) mostrarProgresso(d.progresso);
+  }
+}
+
 async function transcreverArquivo() {
   const input  = document.getElementById('input-arquivo');
   const idioma = document.getElementById('arq-idioma').value;
   if (!input.files.length) { mostrarErroNova('Selecione um arquivo.'); return; }
-  mostrarProgresso('Enviando e transcrevendo...');
+  mostrarProgresso('Enviando arquivo...');
   document.getElementById('btn-arq').disabled = true;
   const form = new FormData();
   form.append('arquivo', input.files[0]); form.append('idioma', idioma); form.append('fonte', 'arquivo');
   try {
     const r = await fetch(`${API}/api/transcrever/arquivo`, {method:'POST', credentials:'include', body:form});
     const d = await r.json();
-    if (d.sucesso) {
-      document.getElementById('nova-progresso').classList.add('hidden');
-      mostrarToast(`✓ "${d.titulo}" transcrito!`);
-      input.value = ''; document.getElementById('nome-arquivo').textContent = 'Clique para selecionar';
-      await abrirNota(d.id);
-    } else mostrarErroNova(d.erro || 'Erro desconhecido.');
-  } catch { mostrarErroNova('Erro de conexão.'); }
+    if (d.erro) { mostrarErroNova(d.erro); return; }
+    mostrarProgresso('Processando... (arquivos grandes podem levar vários minutos)');
+    const resultado = await aguardarJob(d.job_id);
+    document.getElementById('nova-progresso').classList.add('hidden');
+    mostrarToast(`✓ "${resultado.titulo}" transcrito!`);
+    input.value = ''; document.getElementById('nome-arquivo').textContent = 'Clique para selecionar';
+    await abrirNota(resultado.id);
+  } catch(e) { mostrarErroNova(e.message || 'Erro de conexão.'); }
   finally { document.getElementById('btn-arq').disabled = false; }
 }
 
@@ -727,20 +740,21 @@ async function transcreverPlaud() {
   const input  = document.getElementById('input-plaud');
   const idioma = document.getElementById('plaud-idioma').value;
   if (!input.files.length) { mostrarErroNova('Selecione um arquivo do Plaud.'); return; }
-  mostrarProgresso('Transcrevendo gravação Plaud...');
+  mostrarProgresso('Enviando arquivo...');
   document.getElementById('btn-plaud').disabled = true;
   const form = new FormData();
   form.append('arquivo', input.files[0]); form.append('idioma', idioma); form.append('fonte', 'plaud');
   try {
     const r = await fetch(`${API}/api/transcrever/arquivo`, {method:'POST', credentials:'include', body:form});
     const d = await r.json();
-    if (d.sucesso) {
-      document.getElementById('nova-progresso').classList.add('hidden');
-      mostrarToast(`✓ Gravação Plaud "${d.titulo}" transcrita!`);
-      input.value = ''; document.getElementById('nome-plaud').textContent = 'Selecionar gravação Plaud';
-      await abrirNota(d.id);
-    } else mostrarErroNova(d.erro || 'Erro desconhecido.');
-  } catch { mostrarErroNova('Erro de conexão.'); }
+    if (d.erro) { mostrarErroNova(d.erro); return; }
+    mostrarProgresso('Processando... (arquivos grandes podem levar vários minutos)');
+    const resultado = await aguardarJob(d.job_id);
+    document.getElementById('nova-progresso').classList.add('hidden');
+    mostrarToast(`✓ Gravação Plaud "${resultado.titulo}" transcrita!`);
+    input.value = ''; document.getElementById('nome-plaud').textContent = 'Selecionar gravação Plaud';
+    await abrirNota(resultado.id);
+  } catch(e) { mostrarErroNova(e.message || 'Erro de conexão.'); }
   finally { document.getElementById('btn-plaud').disabled = false; }
 }
 

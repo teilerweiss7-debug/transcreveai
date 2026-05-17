@@ -2,7 +2,7 @@
 Transcreve IA — Plataforma de Aprendizado
 """
 
-import os, re, glob, json, shutil, tempfile, secrets, subprocess
+import os, re, glob, json, shutil, tempfile, secrets, subprocess, threading, uuid
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
@@ -386,6 +386,8 @@ def _titulo_youtube(video_id):
 EXTS_OK  = {'.mp3', '.mp4', '.m4a', '.wav', '.ogg', '.webm', '.mov', '.mkv', '.flac', '.aac', '.opus'}
 MAX_GROQ = 24 * 1024 * 1024  # 24 MB — margem abaixo do limite de 25 MB do Groq
 
+_jobs = {}  # job_id -> {'status': 'processing/done/error', 'progresso': str, 'resultado': dict, 'erro': str}
+
 
 def _tem_ffmpeg():
     try:
@@ -446,6 +448,62 @@ def _preparar_chunks(arquivo, pasta):
     return chunks if chunks else None
 
 
+def _processar_arquivo_bg(job_id, caminho, ext, idioma, fonte, nome, user_id):
+    """Processa arquivo em background thread e salva resultado em _jobs."""
+    pasta_temp = os.path.dirname(caminho)
+    try:
+        tamanho = os.path.getsize(caminho)
+        print(f'[arquivo-bg] {nome} fonte={fonte} tamanho={tamanho} bytes job={job_id}')
+        EXTS_AUDIO_DIRETO = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac', '.opus'}
+
+        if tamanho <= MAX_GROQ and ext in EXTS_AUDIO_DIRETO:
+            _jobs[job_id]['progresso'] = 'Transcrevendo áudio...'
+            segmentos = transcrever_audio_groq(caminho, idioma)
+        else:
+            if not _tem_ffmpeg():
+                _jobs[job_id] = {'status': 'error', 'erro': 'Arquivo muito grande e o servidor não tem ffmpeg instalado.'}
+                return
+            _jobs[job_id]['progresso'] = 'Convertendo áudio (pode demorar alguns minutos)...'
+            chunks = _preparar_chunks(caminho, pasta_temp)
+            if not chunks:
+                _jobs[job_id] = {'status': 'error', 'erro': 'Erro ao processar o arquivo. Verifique se ele não está corrompido.'}
+                return
+            segmentos = []
+            total = len(chunks)
+            for i, (chunk_path, offset) in enumerate(chunks):
+                _jobs[job_id]['progresso'] = f'Transcrevendo parte {i + 1} de {total}...'
+                print(f'[arquivo-bg] chunk {i + 1}/{total} offset={offset}s')
+                segs = transcrever_audio_groq(chunk_path, idioma)
+                if segs:
+                    for s in segs:
+                        s['inicio'] = round(s['inicio'] + offset, 1)
+                    segmentos.extend(segs)
+
+        if not segmentos:
+            _jobs[job_id] = {'status': 'error', 'erro': 'Não foi possível transcrever o arquivo.'}
+            return
+
+        titulo = os.path.splitext(nome)[0]
+        with get_db() as db:
+            cur = db.execute(
+                'INSERT INTO transcricoes (user_id, titulo, fonte, segmentos, filename) VALUES (?, ?, ?, ?, ?)',
+                (user_id, titulo, fonte, json.dumps(segmentos), nome)
+            )
+            tid = cur.lastrowid
+
+        _jobs[job_id] = {
+            'status': 'done',
+            'resultado': {'sucesso': True, 'id': tid, 'titulo': titulo, 'segmentos': segmentos, 'total': len(segmentos)}
+        }
+        print(f'[arquivo-bg] job={job_id} concluído: {len(segmentos)} segmentos')
+
+    except Exception as e:
+        print(f'[arquivo-bg] exceção job={job_id}: {e}')
+        _jobs[job_id] = {'status': 'error', 'erro': str(e)}
+    finally:
+        shutil.rmtree(pasta_temp, ignore_errors=True)
+
+
 @app.route('/api/transcrever/arquivo', methods=['POST'])
 @login_required
 def transcrever_arquivo():
@@ -468,48 +526,28 @@ def transcrever_arquivo():
     pasta_temp = tempfile.mkdtemp()
     original   = os.path.join(pasta_temp, f'original{ext}')
     arq.save(original)
-    tamanho = os.path.getsize(original)
-    print(f'[arquivo] {nome} fonte={fonte} tamanho={tamanho} bytes')
 
-    try:
-        EXTS_AUDIO_DIRETO = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac', '.opus'}
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {'status': 'processing', 'progresso': 'Recebendo arquivo...'}
+    print(f'[arquivo] job={job_id} nome={nome} iniciado')
 
-        if tamanho <= MAX_GROQ and ext in EXTS_AUDIO_DIRETO:
-            # Pequeno e já é áudio — transcreve direto sem ffmpeg
-            segmentos = transcrever_audio_groq(original, idioma)
-        else:
-            # Grande ou é vídeo — precisa do ffmpeg para comprimir/dividir
-            if not _tem_ffmpeg():
-                return jsonify({'erro': 'Arquivo muito grande e o servidor não tem ffmpeg instalado. Contate o suporte.'}), 500
+    t = threading.Thread(
+        target=_processar_arquivo_bg,
+        args=(job_id, original, ext, idioma, fonte, nome, session['user_id']),
+        daemon=True
+    )
+    t.start()
 
-            chunks = _preparar_chunks(original, pasta_temp)
-            if not chunks:
-                return jsonify({'erro': 'Erro ao processar o arquivo. Verifique se ele não está corrompido.'}), 500
+    return jsonify({'job_id': job_id})
 
-            segmentos = []
-            for chunk_path, offset in chunks:
-                print(f'[arquivo] transcrevendo chunk offset={offset}s')
-                segs = transcrever_audio_groq(chunk_path, idioma)
-                if segs:
-                    for s in segs:
-                        s['inicio'] = round(s['inicio'] + offset, 1)
-                    segmentos.extend(segs)
 
-        if not segmentos:
-            return jsonify({'erro': 'Não foi possível transcrever o arquivo.'}), 500
-
-        titulo = os.path.splitext(nome)[0]
-        with get_db() as db:
-            cur = db.execute(
-                'INSERT INTO transcricoes (user_id, titulo, fonte, segmentos, filename) VALUES (?, ?, ?, ?, ?)',
-                (session['user_id'], titulo, fonte, json.dumps(segmentos), nome)
-            )
-            tid = cur.lastrowid
-
-        return jsonify({'sucesso': True, 'id': tid, 'titulo': titulo, 'segmentos': segmentos, 'total': len(segmentos)})
-
-    finally:
-        shutil.rmtree(pasta_temp, ignore_errors=True)
+@app.route('/api/transcricao/job/<job_id>', methods=['GET'])
+@login_required
+def verificar_job(job_id):
+    job = _jobs.get(job_id)
+    if not job:
+        return jsonify({'erro': 'Job não encontrado.'}), 404
+    return jsonify(job)
 
 
 # ── PLAUD WEBHOOK (automático via Zapier) ────────────────────────────────────
